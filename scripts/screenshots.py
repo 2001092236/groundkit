@@ -24,11 +24,14 @@ def main() -> None:
         page.wait_for_selector("#report:not([hidden]) .kpi, #notice .notice", timeout=240_000)
         page.wait_for_timeout(1500)
         page.screenshot(path=str(OUT / "demo.png"), full_page=True)
-        result = page.evaluate("document.querySelector('#report .kpi .v')?.textContent || document.querySelector('#notice')?.textContent")
+        result = page.evaluate(
+            "document.querySelector('#report .kpi .v')?.textContent || document.querySelector('#notice')?.textContent"
+        )
         print("desktop:", OUT / "demo.png", "|", (result or "").strip()[:80])
 
         mobile = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
-        mobile.goto(f"{BASE}/", wait_until="load"); mobile.wait_for_timeout(1500)
+        mobile.goto(f"{BASE}/", wait_until="load")
+        mobile.wait_for_timeout(1500)
         mobile.screenshot(path=str(OUT / "demo-mobile.png"), full_page=False)
         print("mobile:", OUT / "demo-mobile.png")
         browser.close()
