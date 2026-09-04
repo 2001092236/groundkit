@@ -138,6 +138,29 @@ export GIGACHAT_CA_BUNDLE=~/russian_trusted_root_ca.cer
 
 Без `GIGACHAT_CA_BUNDLE` запрос всё равно уйдёт, но с отключённой проверкой TLS и предупреждением в логе — для продакшна так делать не стоит.
 
+## Картинки
+
+Тот же принцип, что и с текстом: провайдеры за одним интерфейсом, вызовы попадают в журнал лимитов, ключи не обязательны.
+
+```python
+from groundkit import generate_image
+
+img = generate_image("уютная юридическая библиотека, тёплый свет", size=(768, 512), seed=7)
+img.save("library.jpg")          # расширение подставится по типу картинки
+print(img.provider, img.model, img.width, img.height)
+```
+
+```bash
+groundkit image "схема процесса согласования договора" --size 1024x768 -o scheme
+```
+
+| Провайдер | Ключ | Бесплатно | Модель |
+|---|---|---|---|
+| `pollinations` | не нужен | [без ключа 1 запрос в 15 с, с бесплатным токеном — в 5 с](https://auth.pollinations.ai) | `sana`. `flux` и `turbo` — псевдонимы к ней на бесплатном тарифе |
+| `cloudflare` | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` | из общих [10 000 нейронов в день](https://developers.cloudflare.com/workers-ai/models/flux-1-schnell/) | FLUX.1 schnell |
+
+Токен Pollinations кладётся в `POLLINATIONS_TOKEN` и включает `nologo` и `private` (картинка не попадает в публичную ленту). Без токена запросы анонимные, а картинки публичны — не подавайте туда ничего чувствительного. У `ImageResult` есть `save()`, `to_data_uri()` и `to_dict()`; при отказе одного провайдера `generate_image` берёт следующего.
+
 ## Лимиты: сколько осталось и когда сброс
 
 groundkit ведёт простой журнал вызовов (`~/.groundkit/usage.json`, в Docker — том `usage_data`): сколько запросов ушло сегодня по каждой модели, сколько токенов, что провайдер прислал в заголовках `x-ratelimit-*` (остаток, лимит, время сброса) и когда модель ответила 429.

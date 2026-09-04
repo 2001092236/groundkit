@@ -101,6 +101,28 @@ def cmd_providers(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_image(args: argparse.Namespace) -> int:
+    from .images import ImageError, generate_image
+
+    try:
+        width, height = (int(v) for v in args.size.lower().split("x", 1))
+    except ValueError:
+        print(f"Размер должен быть вида 1024x1024, а не {args.size!r}", file=sys.stderr)
+        return 2
+    try:
+        image = generate_image(args.prompt, _csv(args.provider), size=(width, height), seed=args.seed)
+    except ImageError as exc:
+        print(f"Не получилось: {exc}", file=sys.stderr)
+        return 1
+    path = image.save(args.out)
+    if args.json:
+        print(json.dumps({**image.to_dict(), "path": str(path)}, ensure_ascii=False, indent=2))
+    else:
+        print(f"{path} — {image.width}×{image.height}, {len(image.data) // 1024} КБ, "
+              f"{image.provider}/{image.model}, {image.latency_s:.1f} с")
+    return 0
+
+
 def cmd_usage(args: argparse.Namespace) -> int:
     from .llm import list_models
     from .usage import get_ledger
@@ -165,6 +187,15 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("providers", help="что настроено, а что нет")
     p.set_defaults(func=cmd_providers)
+
+    p = sub.add_parser("image", help="сгенерировать картинку бесплатным провайдером")
+    p.add_argument("prompt")
+    p.add_argument("--out", "-o", default="image", help="куда сохранить; расширение подставится само")
+    p.add_argument("--provider", "-p", help="pollinations, cloudflare (через запятую — по очереди)")
+    p.add_argument("--size", default="1024x1024")
+    p.add_argument("--seed", type=int, help="одинаковый seed даёт одинаковую картинку")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_image)
 
     p = sub.add_parser("usage", help="лимиты: сколько использовано сегодня, сколько осталось, когда сброс")
     p.add_argument("--json", action="store_true")

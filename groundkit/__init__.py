@@ -1,6 +1,12 @@
 """groundkit — бесплатные LLM + веб-поиск с проверяемыми цитатами."""
 
 from .answer import Answer, Answerer, verify_citations
+from .images import (
+    CloudflareImages,
+    ImageResult,
+    Pollinations,
+    generate_image,
+)
 from .llm import (
     ClaudeCLI,
     GigaChat,
@@ -30,4 +36,8 @@ __all__ = [
     "complete_with_fallback",
     "default_chain",
     "list_models",
+    "generate_image",
+    "ImageResult",
+    "Pollinations",
+    "CloudflareImages",
 ]

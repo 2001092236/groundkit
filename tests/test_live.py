@@ -67,3 +67,14 @@ def test_gigachat_live():
     print("\nGigaChat:", out.text, out.model, f"{out.latency_s:.1f}s")
     assert "париж" in out.text.lower()
     assert out.provider == "gigachat" and out.input_tokens
+
+
+@live
+def test_pollinations_live_image():
+    """Pollinations работает без ключа — картинка должна прийти настоящим JPEG/PNG."""
+    from groundkit import generate_image
+
+    img = generate_image("a red apple on a white table", ["pollinations"], size=(384, 384), seed=1)
+    print("\nPollinations:", img.content_type, len(img.data), "байт", f"{img.latency_s:.1f}s")
+    assert img.data[:2] in (b"\xff\xd8", b"\x89P") and len(img.data) > 3000
+    assert img.content_type.startswith("image/")
