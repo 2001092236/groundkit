@@ -55,3 +55,15 @@ def test_full_pipeline_free_models():
     out = qa.ask("Когда был принят Гражданский кодекс РФ (часть первая)?")
     print("\nМОДЕЛЬ:", out.model, "\nОТВЕТ:", out.answer)
     assert out.ok and "1994" in out.answer
+
+
+@live
+@pytest.mark.skipif(not os.getenv("GIGACHAT_AUTH_KEY"), reason="нет GIGACHAT_AUTH_KEY")
+def test_gigachat_live():
+    from groundkit import GigaChat
+
+    out = GigaChat().complete([{"role": "system", "content": "Отвечай одним словом."},
+                               {"role": "user", "content": "Столица Франции?"}])
+    print("\nGigaChat:", out.text, out.model, f"{out.latency_s:.1f}s")
+    assert "париж" in out.text.lower()
+    assert out.provider == "gigachat" and out.input_tokens

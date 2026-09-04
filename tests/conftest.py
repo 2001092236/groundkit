@@ -6,17 +6,26 @@ from groundkit.search import SearchResult
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch, tmp_path):
-    """Тесты не должны зависеть от ключей на машине разработчика и не должны писать в ~/.groundkit."""
+def _clean_env(monkeypatch, tmp_path, request):
+    """Тесты не должны зависеть от ключей на машине разработчика и не должны писать в ~/.groundkit.
+
+    LiteLLM при импорте сам подтягивает ``.env`` из рабочей папки, поэтому импортируем
+    его до очистки, а чистим по шаблону — чтобы новый провайдер не пришлось дописывать руками.
+    Живым тестам (``-m live``) ключи, наоборот, нужны — их окружение не трогаем.
+    """
+    import litellm  # noqa: F401 — импорт с побочным эффектом: загружает .env
+
     from groundkit import usage
 
+    if not request.node.get_closest_marker("live"):
+        for key in list(os.environ):
+            if key.endswith(("_API_KEY", "_AUTH_KEY", "_ACCOUNT_ID", "_CA_BUNDLE")) or key.startswith(
+                ("GROUNDKIT_", "GIGACHAT_", "SEARXNG_")
+            ):
+                monkeypatch.delenv(key, raising=False)
+    # Журнал лимитов — во временный файл, иначе тесты пишут в настоящий ~/.groundkit/usage.json.
     monkeypatch.setenv("GROUNDKIT_USAGE_FILE", str(tmp_path / "usage.json"))
     usage._ledger = None
-    for key in ["GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "MISTRAL_API_KEY", "CEREBRAS_API_KEY",
-                "ANTHROPIC_API_KEY", "EXA_API_KEY", "BRAVE_API_KEY", "JINA_API_KEY", "GROUNDKIT_CLAUDE_CLI",
-                "CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "DASHSCOPE_API_KEY",
-                "GROUNDKIT_ACCESS_TOKEN"]:
-        monkeypatch.delenv(key, raising=False)
 
 
 @pytest.fixture

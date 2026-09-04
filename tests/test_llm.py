@@ -1,6 +1,8 @@
 import json
 import subprocess
+import time
 
+import httpx
 import pytest
 
 from groundkit import llm
@@ -170,3 +172,88 @@ def test_model_detection_from_env(monkeypatch):
     monkeypatch.setattr(llm.shutil, "which", lambda _: "/usr/bin/claude")
     assert default_chain()[-1] == "claude-cli"
     assert {m["model"] for m in list_models() if m["configured"]} == {"groq/qwen/qwen3.8-27b", "groq/openai/gpt-oss-120b", "claude-cli"}
+
+
+def test_gigachat_oauth_caches_token_and_calls_chat(monkeypatch):
+    """Токен берётся один раз на два вызова, запрос уходит с Bearer и моделью."""
+    import respx
+
+    from groundkit.llm import GIGACHAT_API_URL, GIGACHAT_OAUTH_URL, GigaChat, _gigachat_token
+
+    _gigachat_token.update(value="", expires_at=0.0)
+    with respx.mock:
+        oauth = respx.post(GIGACHAT_OAUTH_URL).mock(return_value=httpx.Response(
+            200, json={"access_token": "tok-1", "expires_at": (time.time() + 1800) * 1000}))
+        chat = respx.post(f"{GIGACHAT_API_URL}/chat/completions").mock(return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": "Париж"}}],
+                       "usage": {"prompt_tokens": 17, "completion_tokens": 4}}))
+        provider = GigaChat(auth_key="base64key", model="GigaChat-2")
+        first = provider.complete(MSGS)
+        provider.complete(MSGS)
+
+    assert first.text == "Париж" and first.model == "gigachat/GigaChat-2" and first.provider == "gigachat"
+    assert first.input_tokens == 17 and first.output_tokens == 4
+    assert oauth.call_count == 1 and chat.call_count == 2  # токен переиспользован
+    assert oauth.calls[0].request.headers["authorization"] == "Basic base64key"
+    assert "RqUID" in oauth.calls[0].request.headers
+    assert b"scope=GIGACHAT_API_PERS" in oauth.calls[0].request.content
+    assert chat.calls[0].request.headers["authorization"] == "Bearer tok-1"
+    assert json.loads(chat.calls[0].request.content)["model"] == "GigaChat-2"
+
+
+def test_gigachat_errors_are_classified(monkeypatch):
+    import respx
+
+    from groundkit.llm import GIGACHAT_API_URL, GIGACHAT_OAUTH_URL, GigaChat, _gigachat_token
+
+    with pytest.raises(NotConfigured):
+        _gigachat_token.update(value="", expires_at=0.0)
+        GigaChat(auth_key="").complete(MSGS)
+
+    _gigachat_token.update(value="", expires_at=0.0)
+    with respx.mock:
+        respx.post(GIGACHAT_OAUTH_URL).mock(return_value=httpx.Response(401, text="bad key"))
+        with pytest.raises(NotConfigured):
+            GigaChat(auth_key="x").complete(MSGS)
+
+    _gigachat_token.update(value="tok", expires_at=time.time() + 900)
+    with respx.mock:
+        respx.post(f"{GIGACHAT_API_URL}/chat/completions").mock(return_value=httpx.Response(429, text="too many"))
+        with pytest.raises(RateLimited):
+            GigaChat(auth_key="x").complete(MSGS)
+
+    _gigachat_token.update(value="tok", expires_at=time.time() + 900)
+    with respx.mock:
+        respx.post(f"{GIGACHAT_API_URL}/chat/completions").mock(return_value=httpx.Response(402, text="no tokens"))
+        with pytest.raises(NotConfigured):
+            GigaChat(auth_key="x").complete(MSGS)
+    assert _gigachat_token["value"] == ""  # протухший токен сброшен
+
+
+def test_gigachat_tls_bundle_from_env(monkeypatch, tmp_path):
+    from groundkit.llm import _gigachat_verify
+
+    monkeypatch.delenv("GIGACHAT_CA_BUNDLE", raising=False)
+    assert _gigachat_verify() is False
+    import ssl
+
+    monkeypatch.setenv("GIGACHAT_CA_BUNDLE", str(certifi_path()))
+    assert isinstance(_gigachat_verify(), ssl.SSLContext)
+
+
+def certifi_path():
+    """Любой валидный CA-бандл: проверяем, что путь превращается в SSL-контекст."""
+    import ssl as _ssl
+
+    return _ssl.get_default_verify_paths().cafile
+
+
+def test_gigachat_build_and_detect(monkeypatch):
+    from groundkit.llm import GigaChat
+
+    provider = build_llm("gigachat/GigaChat-2-Pro")
+    assert isinstance(provider, GigaChat) and provider.model == "GigaChat-2-Pro"
+    assert not model_configured("gigachat/GigaChat-2")
+    monkeypatch.setenv("GIGACHAT_AUTH_KEY", "k")
+    assert model_configured("gigachat/GigaChat-2")
+    assert "gigachat/GigaChat-2" in default_chain()

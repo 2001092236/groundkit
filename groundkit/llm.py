@@ -11,8 +11,11 @@ import json
 import logging
 import os
 import shutil
+import ssl
 import subprocess
+import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -221,6 +224,124 @@ class OpenAICompat:
         return result
 
 
+GIGACHAT_OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+GIGACHAT_API_URL = "https://gigachat.devices.sberbank.ru/api/v1"
+# Серверы Сбера подписаны сертификатом «Russian Trusted Root CA» Минцифры, которого
+# нет в стандартных бандлах. Путь к скачанному .cer кладётся в GIGACHAT_CA_BUNDLE.
+GIGACHAT_CA_URL = "https://gu-st.ru/content/Other/doc/russian_trusted_root_ca.cer"
+
+_gigachat_token: dict = {"value": "", "expires_at": 0.0}
+_gigachat_lock = threading.Lock()
+_gigachat_tls_warned = False
+
+
+def _gigachat_verify() -> ssl.SSLContext | bool:
+    """Чем проверять TLS Сбера: бандл из GIGACHAT_CA_BUNDLE, иначе без проверки."""
+    global _gigachat_tls_warned
+    bundle = os.getenv("GIGACHAT_CA_BUNDLE", "")
+    if bundle and os.path.exists(bundle):
+        return ssl.create_default_context(cafile=bundle)
+    if not _gigachat_tls_warned:
+        log.warning("GigaChat: TLS-проверка отключена — нет сертификата Минцифры. "
+                    "Скачайте %s и укажите путь в GIGACHAT_CA_BUNDLE.", GIGACHAT_CA_URL)
+        _gigachat_tls_warned = True
+    return False
+
+
+@dataclass
+class GigaChat:
+    """Сбер GigaChat. Ключ авторизации — base64 от ``client_id:client_secret``.
+
+    Access-token живёт 30 минут и обновляется автоматически. Работает и из России,
+    и с зарубежного сервера. Модели: ``GigaChat``, ``GigaChat-2``, ``GigaChat-2-Pro``,
+    ``GigaChat-2-Max``.
+    """
+
+    model: str = "GigaChat-2"
+    auth_key: str = field(default_factory=lambda: os.getenv("GIGACHAT_AUTH_KEY", ""))
+    scope: str = field(default_factory=lambda: os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"))
+    timeout: float = 90.0
+
+    @property
+    def name(self) -> str:
+        return f"gigachat/{self.model}"
+
+    def _token(self) -> str:
+        """Access-token из кэша или новый по ключу авторизации."""
+        with _gigachat_lock:
+            if _gigachat_token["value"] and time.time() < _gigachat_token["expires_at"] - 60:
+                return _gigachat_token["value"]
+            if not self.auth_key:
+                raise NotConfigured("GIGACHAT_AUTH_KEY не задан (base64 от client_id:client_secret)")
+            try:
+                resp = httpx.post(
+                    GIGACHAT_OAUTH_URL,
+                    data={"scope": self.scope},
+                    headers={"Authorization": f"Basic {self.auth_key}", "RqUID": str(uuid.uuid4()),
+                             "Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=self.timeout,
+                    verify=_gigachat_verify(),
+                )
+            except httpx.HTTPError as exc:
+                raise LLMError(f"GigaChat OAuth недоступен: {type(exc).__name__}: {exc}") from exc
+            if resp.status_code in (401, 403):
+                raise NotConfigured(f"GigaChat OAuth {resp.status_code}: {resp.text[:200]}")
+            if resp.status_code >= 400:
+                raise LLMError(f"GigaChat OAuth {resp.status_code}: {resp.text[:200]}")
+            data = resp.json()
+            _gigachat_token["value"] = data["access_token"]
+            expires = float(data.get("expires_at") or 0) / 1000
+            _gigachat_token["expires_at"] = expires or time.time() + 1500
+            return _gigachat_token["value"]
+
+    def complete(
+        self, messages: list[Message], *, temperature: float = 0.2, max_tokens: int | None = None
+    ) -> LLMResponse:
+        ledger = get_ledger()
+        started = time.monotonic()
+        try:
+            token = self._token()
+        except LLMError as exc:
+            ledger.record(self.name, ok=False, latency_s=time.monotonic() - started, error=str(exc))
+            raise
+        body: dict = {"model": self.model, "messages": messages, "temperature": max(temperature, 0.01)}
+        if max_tokens:
+            body["max_tokens"] = max_tokens
+        try:
+            resp = httpx.post(
+                f"{GIGACHAT_API_URL}/chat/completions", json=body,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                timeout=self.timeout, verify=_gigachat_verify(),
+            )
+        except httpx.HTTPError as exc:
+            err = LLMError(f"GigaChat: {type(exc).__name__}: {exc}")
+            ledger.record(self.name, ok=False, latency_s=time.monotonic() - started, error=str(err))
+            raise err from exc
+        latency = time.monotonic() - started
+        if resp.status_code >= 400:
+            detail = resp.text[:300]
+            if resp.status_code == 429:
+                err = RateLimited(f"GigaChat 429: {detail}")
+            elif resp.status_code in (401, 402, 403):
+                _gigachat_token["value"] = ""  # токен мог протухнуть — возьмём новый на следующей попытке
+                err = NotConfigured(f"GigaChat {resp.status_code}: {detail}")
+            else:
+                err = LLMError(f"GigaChat {resp.status_code}: {detail}")
+            ledger.record(self.name, ok=False, latency_s=latency, error=str(err),
+                          rate_limited=resp.status_code == 429, headers=dict(resp.headers))
+            raise err
+        data = resp.json()
+        choice = (data.get("choices") or [{}])[0]
+        usage = data.get("usage") or {}
+        result = LLMResponse(
+            text=(choice.get("message") or {}).get("content") or "", model=self.name, provider="gigachat",
+            latency_s=latency, input_tokens=usage.get("prompt_tokens"), output_tokens=usage.get("completion_tokens"),
+        )
+        ledger.record(self.name, ok=True, input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                      latency_s=latency, headers=dict(resp.headers))
+        return result
+
+
 @dataclass
 class ClaudeCLI:
     """Claude Code в неинтерактивном режиме как чистая LLM.
@@ -340,6 +461,16 @@ KNOWN_MODELS: list[dict] = [
      "env": "CLOUDFLARE_API_KEY", "free": "10 000 нейронов/день ≈ 375K входных или 49K выходных токенов",
      "rpd": None, "rpm": None, "reset": "00:00 UTC",
      "docs": "https://developers.cloudflare.com/workers-ai/platform/pricing/", "signup": "https://dash.cloudflare.com"},
+    {"model": "gigachat/GigaChat-2", "label": "Сбер · GigaChat-2", "env": "GIGACHAT_AUTH_KEY",
+     "free": "Freemium: 1 000 000 токенов, обновляется раз в 12 месяцев; 1 поток", "rpd": None, "rpm": None,
+     "reset": "раз в 12 месяцев от даты регистрации",
+     "docs": "https://developers.sber.ru/docs/ru/gigachat/tariffs/individual-tariffs",
+     "signup": "https://developers.sber.ru/studio"},
+    {"model": "gigachat/GigaChat-2-Pro", "label": "Сбер · GigaChat-2 Pro", "env": "GIGACHAT_AUTH_KEY",
+     "free": "из того же пула 1 000 000 токенов, расходуется быстрее", "rpd": None, "rpm": None,
+     "reset": "раз в 12 месяцев от даты регистрации",
+     "docs": "https://developers.sber.ru/docs/ru/gigachat/tariffs/individual-tariffs",
+     "signup": "https://developers.sber.ru/studio"},
     {"model": "openrouter/google/gemma-4-26b-a4b-it:free", "label": "OpenRouter · Gemma 4 26B (free)",
      "env": "OPENROUTER_API_KEY", "free": "50 запросов/день на все free-модели (1000 при пополнении ≥ $10), 20 RPM",
      "rpd": 50, "rpm": 20, "reset": "00:00 UTC", "docs": "https://openrouter.ai/docs/api-reference/limits",
@@ -385,7 +516,7 @@ def model_configured(spec: str) -> bool:
     env_by_prefix = {
         "gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY",
         "mistral": "MISTRAL_API_KEY", "cerebras": "CEREBRAS_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
-        "cloudflare": "CLOUDFLARE_API_KEY", "dashscope": "DASHSCOPE_API_KEY",
+        "cloudflare": "CLOUDFLARE_API_KEY", "dashscope": "DASHSCOPE_API_KEY", "gigachat": "GIGACHAT_AUTH_KEY",
         "openai": "OPENAI_API_KEY", "together_ai": "TOGETHER_API_KEY", "deepseek": "DEEPSEEK_API_KEY",
     }
     env = env_by_prefix.get(prefix)
@@ -408,6 +539,8 @@ def build_llm(spec: str | LLMProvider) -> LLMProvider:
     if spec == "claude-cli" or spec.startswith("claude-cli/"):
         _, _, model = spec.partition("/")
         return ClaudeCLI(model=model or None)
+    if spec.startswith("gigachat/"):
+        return GigaChat(model=spec.split("/", 1)[1])
     if spec.split("/", 1)[0] in OPENAI_COMPAT:
         return OpenAICompat(model=spec)
     return LiteLLM(model=spec)

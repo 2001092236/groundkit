@@ -111,6 +111,7 @@ flowchart LR
 | `groq/qwen/qwen3.8-27b` | [`GROQ_API_KEY`](https://console.groq.com/keys) | [1000 запросов/день, 30 RPM, 8K токенов/мин, 200K токенов/день](https://console.groq.com/docs/rate-limits) | Дефолт: быстро и без карты. Из России API недоступен, нужен сервер за рубежом |
 | `groq/openai/gpt-oss-120b` | тот же | те же лимиты, отдельный счётчик | Рассуждающая модель, второй «карман» на том же ключе |
 | `cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast` | [`CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID`](https://dash.cloudflare.com) | [10 000 нейронов/день](https://developers.cloudflare.com/workers-ai/platform/pricing/) ≈ 375K входных или 49K выходных токенов, сброс 00:00 UTC | Работает отовсюду, ~1.5–3 с на ответ |
+| `gigachat/GigaChat-2` | [`GIGACHAT_AUTH_KEY`](https://developers.sber.ru/studio) | [Freemium: 1 000 000 токенов, обновление раз в 12 месяцев](https://developers.sber.ru/docs/ru/gigachat/tariffs/individual-tariffs), 1 поток | Лучше остальных пишет по-русски. Работает и из России, и с зарубежного сервера. Нужен сертификат Минцифры, см. ниже |
 | `openrouter/google/gemma-4-26b-a4b-it:free` | [`OPENROUTER_API_KEY`](https://openrouter.ai/keys) | [50 запросов/день на все free-модели, 20 RPM](https://openrouter.ai/docs/api-reference/limits); 1000/день при разовом пополнении ≥ $10 | Общий пул, бывает «temporarily rate-limited upstream» |
 | `mistral/mistral-small-latest` | [`MISTRAL_API_KEY`](https://console.mistral.ai) | [Free mode: $10 кредитов/мес](https://docs.mistral.ai/admin/billing-usage/usage-limits), лимиты по моделям — в Admin Panel → API → Limits | Наш ключ отвечает 429 с лимитом 0 запросов/мин: в консоли нужно включить Free mode |
 | `cerebras/gpt-oss-120b` | [`CEREBRAS_API_KEY`](https://cloud.cerebras.ai) | [триал $5 на 30 дней, 5 RPM, 1M токенов/день](https://inference-docs.cerebras.ai/support/rate-limits) | Доступ включается только после привязки карты, до этого 402 |
@@ -123,6 +124,19 @@ flowchart LR
 Контекст для модели по умолчанию ограничен 12 000 символами на все источники: бесплатные тарифы режут не только запросы в день, но и токены в минуту (Groq — 8K). Поднимается параметром `Answerer(max_context_chars=...)`.
 
 ⚠️ На бесплатных уровнях запросы обычно используются провайдерами для обучения — не подавайте туда чувствительные данные. Cohere free — только некоммерческое использование.
+
+### GigaChat: ключ и сертификат
+
+Ключ авторизации берётся в [Сбер Studio](https://developers.sber.ru/studio): создайте проект GigaChat API, скопируйте **Authorization key** (это base64 от `client_id:client_secret`) в `GIGACHAT_AUTH_KEY`. Токен доступа живёт 30 минут, groundkit обновляет его сам.
+
+Серверы Сбера подписаны сертификатом «Russian Trusted Root CA» Минцифры, которого нет в стандартных бандлах. В Docker-образе он уже вшит, локально:
+
+```bash
+curl -o ~/russian_trusted_root_ca.cer https://gu-st.ru/content/Other/doc/russian_trusted_root_ca.cer
+export GIGACHAT_CA_BUNDLE=~/russian_trusted_root_ca.cer
+```
+
+Без `GIGACHAT_CA_BUNDLE` запрос всё равно уйдёт, но с отключённой проверкой TLS и предупреждением в логе — для продакшна так делать не стоит.
 
 ## Лимиты: сколько осталось и когда сброс
 
