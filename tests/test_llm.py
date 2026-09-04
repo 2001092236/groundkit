@@ -275,3 +275,35 @@ def test_zai_disables_thinking_by_default(monkeypatch):
     body = json.loads(route.calls[0].request.content)
     assert body["thinking"] == {"type": "disabled"} and body["model"] == "glm-4.7-flash"
     assert route.calls[0].request.headers["authorization"] == "Bearer k"
+
+
+def test_zai_retries_429_because_the_free_tier_is_single_threaded(monkeypatch):
+    import respx
+
+    from groundkit.llm import OPENAI_COMPAT, OpenAICompat
+
+    monkeypatch.setenv("ZAI_API_KEY", "k")
+    monkeypatch.setattr(llm.time, "sleep", lambda _: None)
+    with respx.mock:
+        route = respx.post(f"{OPENAI_COMPAT['zai']['base']}/chat/completions")
+        route.side_effect = [
+            httpx.Response(429, text="overloaded"),
+            httpx.Response(200, json={"choices": [{"message": {"content": "Париж"}}], "usage": {}}),
+        ]
+        assert OpenAICompat(model="zai/glm-4.5-flash").complete(MSGS).text == "Париж"
+        assert route.call_count == 2
+
+
+def test_groq_does_not_retry_429(monkeypatch):
+    """Повтор включён только там, где 429 означает «занято», а не «квота кончилась»."""
+    import respx
+
+    from groundkit.llm import OPENAI_COMPAT, OpenAICompat
+
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    with respx.mock:
+        route = respx.post(f"{OPENAI_COMPAT['groq']['base']}/chat/completions").mock(
+            return_value=httpx.Response(429, text="quota"))
+        with pytest.raises(RateLimited):
+            OpenAICompat(model="groq/x").complete(MSGS)
+        assert route.call_count == 1

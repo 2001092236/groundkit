@@ -161,7 +161,7 @@ OPENAI_COMPAT: dict[str, dict] = {
     # Z.ai (Zhipu), международный эндпоинт. У GLM размышления включены по умолчанию и
     # съедают в разы больше токенов, поэтому по умолчанию выключаем их явно.
     "zai": {"base": "https://api.z.ai/api/paas/v4", "env": "ZAI_API_KEY",
-            "extra_body": {"thinking": {"type": "disabled"}}},
+            "extra_body": {"thinking": {"type": "disabled"}}, "retry_429": 2},
 }
 
 
@@ -197,12 +197,20 @@ class OpenAICompat:
             headers["HTTP-Referer"] = "https://github.com/2001092236/groundkit"
             headers["X-Title"] = "groundkit"
         started = time.monotonic()
-        try:
-            resp = httpx.post(f"{cfg['base']}/chat/completions", json=body, headers=headers, timeout=self.timeout)
-        except httpx.HTTPError as exc:
-            err = LLMError(f"{type(exc).__name__}: {exc}")
-            ledger.record(self.model, ok=False, latency_s=time.monotonic() - started, error=str(err))
-            raise err from exc
+        # Провайдеры с одним потоком (Z.ai) отвечают 429 «temporarily overloaded» просто на
+        # соседний запрос: короткий повтор дешевле, чем уходить на следующую модель.
+        for attempt in range(cfg.get("retry_429", 0) + 1):
+            try:
+                resp = httpx.post(f"{cfg['base']}/chat/completions", json=body, headers=headers,
+                                  timeout=self.timeout)
+            except httpx.HTTPError as exc:
+                err = LLMError(f"{type(exc).__name__}: {exc}")
+                ledger.record(self.model, ok=False, latency_s=time.monotonic() - started, error=str(err))
+                raise err from exc
+            if resp.status_code != 429 or attempt == cfg.get("retry_429", 0):
+                break
+            log.info("%s: 429, повтор через %.1f с", prefix, 2.0 * (attempt + 1))
+            time.sleep(2.0 * (attempt + 1))
         latency = time.monotonic() - started
         resp_headers = dict(resp.headers)
         if resp.status_code >= 400:
@@ -466,8 +474,12 @@ KNOWN_MODELS: list[dict] = [
      "env": "CLOUDFLARE_API_KEY", "free": "10 000 нейронов/день ≈ 375K входных или 49K выходных токенов",
      "rpd": None, "rpm": None, "reset": "00:00 UTC",
      "docs": "https://developers.cloudflare.com/workers-ai/platform/pricing/", "signup": "https://dash.cloudflare.com"},
-    {"model": "zai/glm-4.7-flash", "label": "Z.ai · GLM-4.7 Flash", "env": "ZAI_API_KEY",
+    {"model": "zai/glm-4.5-flash", "label": "Z.ai · GLM-4.5 Flash", "env": "ZAI_API_KEY",
      "free": "бессрочно бесплатна, 1 одновременный запрос; размышления выключены (иначе расход в 28 раз выше)",
+     "rpd": None, "rpm": None, "reset": "не публикуется",
+     "docs": "https://docs.z.ai/guides/llm/glm-4.5-flash", "signup": "https://z.ai/manage-apikey/apikey-list"},
+    {"model": "zai/glm-4.7-flash", "label": "Z.ai · GLM-4.7 Flash", "env": "ZAI_API_KEY",
+     "free": "бессрочно бесплатна, но чаще занята: тариф в один поток, отвечает 429",
      "rpd": None, "rpm": None, "reset": "не публикуется",
      "docs": "https://docs.z.ai/guides/llm/glm-4.7-flash", "signup": "https://z.ai/manage-apikey/apikey-list"},
     {"model": "gigachat/GigaChat-2", "label": "Сбер · GigaChat-2", "env": "GIGACHAT_AUTH_KEY",

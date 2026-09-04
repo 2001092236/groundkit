@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import logging
 import os
 import struct
@@ -334,7 +335,10 @@ class HuggingFaceSpace:
         ledger = get_ledger()
         started = time.monotonic()
         try:
-            client = Client(self.space, hf_token=self.token or None, verbose=False)
+            # В gradio_client 1.x параметр назывался hf_token, в 2.x — token.
+            kwargs = {"token" if "token" in inspect.signature(Client.__init__).parameters else "hf_token":
+                      self.token or None}
+            client = Client(self.space, verbose=False, **kwargs)
             out = client.predict(
                 prompt=prompt, seed=seed or 0, randomize_seed=seed is None,
                 width=size[0], height=size[1], num_inference_steps=self.steps, api_name=self.api_name,
