@@ -171,3 +171,11 @@ def test_openai_compat_classifies_http_errors(monkeypatch):
         llm.OpenAICompat("openrouter/x").complete([{"role": "user", "content": "hi"}])
     assert isinstance(llm.build_llm("mistral/mistral-small-latest"), llm.OpenAICompat)
     assert isinstance(llm.build_llm("gemini/x"), llm.LiteLLM)
+
+
+def test_block_uses_soonest_reset_when_no_retry_after(tmp_path):
+    ledger = UsageLedger(tmp_path / "u.json")
+    ledger.record("g", ok=False, rate_limited=True, error="429 tokens per minute",
+                  headers={"x-ratelimit-reset-requests": "1m26s", "x-ratelimit-reset-tokens": "2s"})
+    until = ledger.blocked_until("g")
+    assert until and until - datetime.now(UTC) <= timedelta(seconds=2.5)

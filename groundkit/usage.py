@@ -152,9 +152,10 @@ class UsageLedger:
                 prov["raw"] = parsed["raw"]
                 prov["observed_at"] = now.isoformat()
             if rate_limited:
-                keys = ("retry_at", "reset_requests_at", "reset_requests_day_at", "reset_requests_minute_at",
-                        "reset_tokens_minute_at", "reset_tokens_at")
-                until = next((parsed[k] for k in keys if parsed.get(k)), None)
+                # retry-after — авторитетно; иначе ближайший из сбросов (429 обычно про самый короткий счётчик)
+                resets = [v for k, v in parsed.items()
+                          if k.startswith("reset_") and v and datetime.fromisoformat(v) > now]
+                until = parsed.get("retry_at") or (min(resets) if resets else None)
                 if not until or datetime.fromisoformat(until) <= now:
                     until = (now + timedelta(seconds=DEFAULT_COOLDOWN_S)).isoformat()
                 prov["blocked_until"] = until
