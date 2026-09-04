@@ -3,7 +3,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 COPY pyproject.toml README.md ./
 COPY groundkit ./groundkit
-RUN pip install --no-cache-dir ".[web,ddg]"
+RUN pip install --no-cache-dir ".[web,ddg,spaces]"
 # Сертификат Минцифры: без него не проверить TLS у GigaChat. Сборка не падает, если он недоступен.
 ADD --chmod=444 https://gu-st.ru/content/Other/doc/russian_trusted_root_ca.cer /etc/ssl/certs/russian_trusted_root_ca.cer
 ENV GIGACHAT_CA_BUNDLE=/etc/ssl/certs/russian_trusted_root_ca.cer
