@@ -114,7 +114,7 @@ flowchart LR
 | `openrouter/google/gemma-4-26b-a4b-it:free` | [`OPENROUTER_API_KEY`](https://openrouter.ai/keys) | 50 запросов/день на все free-модели | Общий пул, бывает «temporarily rate-limited upstream» |
 | `mistral/mistral-small-latest` | [`MISTRAL_API_KEY`](https://console.mistral.ai) | 1 млрд токенов/мес, 2 RPM | Нужно включить бесплатный план **Experiment** в консоли, иначе 429 |
 | `cerebras/gpt-oss-120b` | [`CEREBRAS_API_KEY`](https://cloud.cerebras.ai) | 14 400 запросов/день | Без активированного плана отвечает 402 |
-| `gemini/gemini-flash-latest` | [`GEMINI_API_KEY`](https://aistudio.google.com/apikey) | ~1500 запросов/день | AI Studio не выдаёт ключи аккаунтам из РФ |
+| `gemini/gemini-3.1-flash-lite` | [`GEMINI_API_KEY`](https://aistudio.google.com/apikey) | ~1500 запросов/день, 15 RPM | Старшие Flash на бесплатном тарифе часто отвечают 503 «high demand»; из РФ API недоступен |
 | `anthropic/claude-haiku-4-5-20251001` | [`ANTHROPIC_API_KEY`](https://console.anthropic.com) | платно | Для продакшна |
 | `claude-cli` | — | в рамках подписки | См. ниже |
 

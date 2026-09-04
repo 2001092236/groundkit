@@ -107,6 +107,7 @@ class LiteLLM:
             raise NotConfigured("Установите `pip install litellm`") from exc
 
         litellm.suppress_debug_info = True
+        litellm.return_response_headers = True  # иначе x-ratelimit-* не попадают в _hidden_params
         started = time.monotonic()
         ledger = get_ledger()
         try:
@@ -272,8 +273,9 @@ KNOWN_MODELS: list[dict] = [
     {"model": "cerebras/gpt-oss-120b", "label": "Cerebras · GPT-OSS 120B", "env": "CEREBRAS_API_KEY",
      "free": "14 400 запросов/день, 1M токенов/день", "rpd": 14400, "rpm": 30,
      "signup": "https://cloud.cerebras.ai"},
-    {"model": "gemini/gemini-flash-latest", "label": "Google Gemini Flash", "env": "GEMINI_API_KEY",
-     "free": "~1500 запросов/день, 15 RPM", "rpd": 1500, "rpm": 15, "signup": "https://aistudio.google.com/apikey"},
+    {"model": "gemini/gemini-3.1-flash-lite", "label": "Google Gemini 3.1 Flash Lite", "env": "GEMINI_API_KEY",
+     "free": "~1500 запросов/день, 15 RPM; старшие Flash часто 503 «high demand»", "rpd": 1500, "rpm": 15,
+     "signup": "https://aistudio.google.com/apikey"},
     {"model": "anthropic/claude-haiku-4-5-20251001", "label": "Anthropic · Claude Haiku 4.5 (платно)",
      "env": "ANTHROPIC_API_KEY", "free": "нет, платный API", "rpd": None, "rpm": None,
      "signup": "https://console.anthropic.com"},
