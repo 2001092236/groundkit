@@ -1,0 +1,66 @@
+# Полный стенд: SearXNG (поиск без ключей) + API/демо + Caddy с автоматическим HTTPS.
+#
+#   cp .env.example .env            # ключи моделей
+#   docker compose -f docker/docker-compose.yml up -d --build
+#
+# GROUNDKIT_DOMAIN — домен для TLS (по умолчанию localhost, тогда Caddy выдаёт
+# самоподписанный сертификат). Для сервера без своего домена подойдёт sslip.io:
+#   GROUNDKIT_DOMAIN=groundkit.1-2-3-4.sslip.io
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./searxng:/etc/searxng:ro
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-change-me-please}
+    expose:
+      - "8080"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+      - GROUNDKIT_TRUST_PROXY=1
+      - GROUNDKIT_SEARCH=${GROUNDKIT_SEARCH:-searxng,ddg,jina}
+      - GROUNDKIT_RPM=${GROUNDKIT_RPM:-6}
+      - GROUNDKIT_RPD=${GROUNDKIT_RPD:-80}
+      - GROUNDKIT_PUBLIC_URL=https://${GROUNDKIT_DOMAIN:-localhost}
+    depends_on:
+      - searxng
+    expose:
+      - "8000"
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - GROUNDKIT_DOMAIN=${GROUNDKIT_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:
