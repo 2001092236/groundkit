@@ -210,6 +210,8 @@ class UsageLedger:
                 "rpd": rpd,
                 "rpm": meta.get("rpm"),
                 "free_note": meta.get("free"),
+                "reset_note": meta.get("reset"),
+                "docs": meta.get("docs"),
                 "remaining": remaining,
                 "remaining_source": "provider" if remaining_by_provider is not None else ("estimate" if rpd else None),
                 "provider": {k: v for k, v in prov.items() if k != "raw"},

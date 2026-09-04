@@ -106,15 +106,15 @@ flowchart LR
 
 Ключи кладутся в `.env` (см. [`.env.example`](.env.example)). Порядок в таблице — порядок автопереключения. Модели и лимиты проверены живыми вызовами 4 сентября 2026; каталоги провайдеров меняются, `groundkit providers` покажет актуальное состояние.
 
-| Модель | Ключ | Бесплатно | Заметка |
+| Модель | Ключ | Бесплатно (по официальным страницам) | Заметка |
 |---|---|---|---|
-| `groq/qwen/qwen3.8-27b` | [`GROQ_API_KEY`](https://console.groq.com/keys) | 1000 запросов/день, 30 RPM, **8K токенов/мин** | Дефолт: быстро и без карты. Из России API недоступен, нужен сервер за рубежом |
-| `groq/openai/gpt-oss-120b` | тот же | те же лимиты | Рассуждающая модель, тратит токены на размышления |
-| `cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast` | [`CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID`](https://dash.cloudflare.com) | 10 000 нейронов/день | Работает отовсюду, ~1.5 с на ответ |
-| `openrouter/google/gemma-4-26b-a4b-it:free` | [`OPENROUTER_API_KEY`](https://openrouter.ai/keys) | 50 запросов/день на все free-модели | Общий пул, бывает «temporarily rate-limited upstream» |
-| `mistral/mistral-small-latest` | [`MISTRAL_API_KEY`](https://console.mistral.ai) | 1 млрд токенов/мес, 2 RPM | Нужно включить бесплатный план **Experiment** в консоли, иначе 429 |
-| `cerebras/gpt-oss-120b` | [`CEREBRAS_API_KEY`](https://cloud.cerebras.ai) | 14 400 запросов/день | Без активированного плана отвечает 402 |
-| `gemini/gemini-3.1-flash-lite` | [`GEMINI_API_KEY`](https://aistudio.google.com/apikey) | ~1500 запросов/день, 15 RPM | Старшие Flash на бесплатном тарифе часто отвечают 503 «high demand»; из РФ API недоступен |
+| `groq/qwen/qwen3.8-27b` | [`GROQ_API_KEY`](https://console.groq.com/keys) | [1000 запросов/день, 30 RPM, 8K токенов/мин, 200K токенов/день](https://console.groq.com/docs/rate-limits) | Дефолт: быстро и без карты. Из России API недоступен, нужен сервер за рубежом |
+| `groq/openai/gpt-oss-120b` | тот же | те же лимиты, отдельный счётчик | Рассуждающая модель, второй «карман» на том же ключе |
+| `cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast` | [`CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID`](https://dash.cloudflare.com) | [10 000 нейронов/день](https://developers.cloudflare.com/workers-ai/platform/pricing/) ≈ 375K входных или 49K выходных токенов, сброс 00:00 UTC | Работает отовсюду, ~1.5–3 с на ответ |
+| `openrouter/google/gemma-4-26b-a4b-it:free` | [`OPENROUTER_API_KEY`](https://openrouter.ai/keys) | [50 запросов/день на все free-модели, 20 RPM](https://openrouter.ai/docs/api-reference/limits); 1000/день при разовом пополнении ≥ $10 | Общий пул, бывает «temporarily rate-limited upstream» |
+| `mistral/mistral-small-latest` | [`MISTRAL_API_KEY`](https://console.mistral.ai) | [Free mode: $10 кредитов/мес](https://docs.mistral.ai/admin/billing-usage/usage-limits), лимиты по моделям — в Admin Panel → API → Limits | Наш ключ отвечает 429 с лимитом 0 запросов/мин: в консоли нужно включить Free mode |
+| `cerebras/gpt-oss-120b` | [`CEREBRAS_API_KEY`](https://cloud.cerebras.ai) | [триал $5 на 30 дней, 5 RPM, 1M токенов/день](https://inference-docs.cerebras.ai/support/rate-limits) | Доступ включается только после привязки карты, до этого 402 |
+| `gemini/gemini-3.1-flash-lite` | [`GEMINI_API_KEY`](https://aistudio.google.com/apikey) | [лимиты видны только в AI Studio](https://ai.google.dev/gemini-api/docs/rate-limits), сброс в полночь по тихоокеанскому времени | Старшие Flash на бесплатном тарифе часто отвечают 503 «high demand»; из РФ API недоступен |
 | `anthropic/claude-haiku-4-5-20251001` | [`ANTHROPIC_API_KEY`](https://console.anthropic.com) | платно | Для продакшна |
 | `claude-cli` | — | в рамках подписки | См. ниже |
 
@@ -153,8 +153,8 @@ Groq, Cerebras, Mistral и OpenRouter вызываются напрямую че
 |---|---|---|---|
 | `searxng` | нет, свой инстанс | безлимитно | Метапоиск по 70+ движкам. `docker compose` ниже поднимает его за минуту |
 | `ddg` | нет | без ключа | Через пакет `ddgs`. Резерв, если SearXNG нет |
-| `jina` | [`JINA_API_KEY`](https://jina.ai) | стартовый баланс токенов | Сразу с текстом страниц. С сентября 2026 без ключа отвечает 401 |
-| `exa` | [`EXA_API_KEY`](https://dashboard.exa.ai) | 20 000/мес | Нейропоиск по смыслу, полный текст |
+| `jina` | [`JINA_API_KEY`](https://jina.ai) | [10M токенов на новый ключ, 100 RPM](https://jina.ai/reader/) | Сразу с текстом страниц. Без ключа отвечает 401 |
+| `exa` | [`EXA_API_KEY`](https://dashboard.exa.ai) | [$10 кредитов/мес ≈ 1400 поисков](https://exa.ai/pricing), новым аккаунтам ещё $20 | Нейропоиск по смыслу, полный текст |
 | `brave` | [`BRAVE_API_KEY`](https://brave.com/search/api) | 2000/мес | Независимый индекс |
 
 Свой провайдер — любой объект с полем `name` и методом `search(query, limit) -> list[SearchResult]`; передаётся в `Answerer(search=[MyProvider()])`.

@@ -263,8 +263,9 @@ PROVIDERS: dict[str, type] = {
 PROVIDER_INFO: dict[str, dict] = {
     "searxng": {"label": "SearXNG (self-hosted)", "env": "SEARXNG_URL", "free": "безлимитно", "needs_key": False},
     "ddg": {"label": "DuckDuckGo", "env": None, "free": "без ключа, мягкие лимиты", "needs_key": False},
-    "jina": {"label": "Jina Search", "env": "JINA_API_KEY", "free": "стартовый баланс токенов", "needs_key": True},
-    "exa": {"label": "Exa", "env": "EXA_API_KEY", "free": "20 000 запр/мес", "needs_key": True},
+    "jina": {"label": "Jina Search", "env": "JINA_API_KEY", "free": "10M токенов на новый ключ, 100 RPM",
+             "needs_key": True},
+    "exa": {"label": "Exa", "env": "EXA_API_KEY", "free": "$10 кредитов/мес ≈ 1400 поисков", "needs_key": True},
     "brave": {"label": "Brave Search", "env": "BRAVE_API_KEY", "free": "2000 запр/мес", "needs_key": True},
 }
 

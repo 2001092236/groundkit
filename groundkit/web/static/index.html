@@ -250,7 +250,7 @@
 
   <section class="limits" id="limits" hidden>
     <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 4 3 5-6"/></svg> Лимиты бесплатных моделей сегодня</h2>
-    <p class="sub">Сколько запросов ушло через это демо, сколько осталось по данным провайдера (или по известному дневному лимиту, тогда со звёздочкой) и когда счётчик обнулится. Модель с исчерпанным лимитом пропускается автоматически до времени сброса.</p>
+    <p class="sub">Сколько запросов ушло через это демо, сколько осталось по данным провайдера (или по опубликованному дневному лимиту, тогда со звёздочкой) и когда счётчик обнулится. Название модели ведёт на официальную страницу лимитов. Модель с исчерпанным лимитом пропускается автоматически до времени сброса.</p>
     <div class="wrap-x"><table id="limitsTable"></table></div>
     <p class="sub muted" id="limitsNote" style="margin-top:10px"></p>
   </section>
@@ -453,10 +453,12 @@
       const status = m.blocked_until ? `<span class="tag bad">лимит</span> ${esc(fmtTime(m.blocked_until).replace(/^через/, "ещё"))}`
         : (m.last_error && !m.ok_today && m.used_today) ? `<span class="tag bad">ошибка</span> ${esc(m.last_error.slice(0, 60))}`
         : m.used_today ? `<span class="tag ok">ok</span>` : `<span class="tag">не вызывалась</span>`;
-      return `<tr><td class="m">${esc(m.label)}<small>${esc(m.model)}</small></td>
+      const label = m.docs ? `<a href="${esc(m.docs)}" target="_blank" rel="noopener" title="официальная страница лимитов">${esc(m.label)}</a>` : esc(m.label);
+      const resetCell = m.provider && (m.provider.reset_requests_at || m.provider.reset_requests_day_at) ? esc(fmtTime(m.resets_at)) : `${esc(fmtTime(m.resets_at))}${m.reset_note ? `<br><span class="muted">${esc(m.reset_note)}</span>` : ""}`;
+      return `<tr><td class="m">${label}<small>${esc(m.model)}</small></td>
         <td>${used}${m.tokens_today ? `<span class="muted"> · ${m.tokens_today.toLocaleString("ru-RU")} ток.</span>` : ""}</td>
         <td>${rem == null ? `<span class="muted">${esc(m.free_note || "нет данных")}</span>` : `${rem}${m.remaining_source === "estimate" ? "*" : ""} из ${limit || "?"}${limit ? `<div class="bar"><i class="${cls}" style="width:${pct}%"></i></div>` : ""}`}</td>
-        <td>${esc(fmtTime(m.resets_at))}</td><td>${status}</td></tr>`;
+        <td>${resetCell}</td><td>${status}</td></tr>`;
     }).join("");
     const or = u.openrouter;
     $("limitsNote").textContent = or && !or.error ? `OpenRouter по данным ключа: сегодня ${or.usage_daily ?? 0} $, за месяц ${or.usage_monthly ?? 0} $, бесплатный тариф: ${or.is_free_tier ? "да" : "нет"}. ` : "";
