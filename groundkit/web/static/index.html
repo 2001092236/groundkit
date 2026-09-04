@@ -447,7 +447,13 @@
   $("form").onsubmit = ask;
   $("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
   $("api").value = store.get("api", ""); $("api").onchange = () => { store.set("api", $("api").value.trim()); loadConfig(); };
-  loadConfig();
+  // Ссылка вида ?q=вопрос&preset=Право РФ&run=1 открывает страницу с готовым вопросом и сразу запускает его.
+  const params = new URLSearchParams(location.search);
+  if (params.get("q")) $("q").value = params.get("q");
+  loadConfig().then(() => {
+    if (params.get("preset") && [...$("preset").options].some((o) => o.value === params.get("preset"))) { $("preset").value = params.get("preset"); $("preset").onchange(); }
+    if (params.get("q") && params.get("run") === "1") ask();
+  });
 })();
 </script>
 </body>
