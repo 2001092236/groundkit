@@ -157,7 +157,9 @@ groundkit image "схема процесса согласования догов
 | Провайдер | Ключ | Бесплатно | Модель |
 |---|---|---|---|
 | `pollinations` | не нужен | [без ключа 1 запрос в 15 с, с бесплатным токеном — в 5 с](https://auth.pollinations.ai) | `sana`. `flux` и `turbo` — псевдонимы к ней на бесплатном тарифе |
-| `cloudflare` | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` | из общих [10 000 нейронов в день](https://developers.cloudflare.com/workers-ai/models/flux-1-schnell/) | FLUX.1 schnell |
+| `cloudflare` | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` | из общих [10 000 нейронов в день](https://developers.cloudflare.com/workers-ai/models/flux-1-schnell/) | FLUX.1 schnell. Всегда отдаёт 1024×1024 и не принимает `seed` |
+
+`size` — пожелание, а не обещание: провайдер вправе вернуть другой размер, поэтому `img.width` и `img.height` читаются из самой картинки. Обрывы связи повторяются автоматически (два раза), ответы с кодом ошибки — нет.
 
 Токен Pollinations кладётся в `POLLINATIONS_TOKEN` и включает `nologo` и `private` (картинка не попадает в публичную ленту). Без токена запросы анонимные, а картинки публичны — не подавайте туда ничего чувствительного. У `ImageResult` есть `save()`, `to_data_uri()` и `to_dict()`; при отказе одного провайдера `generate_image` берёт следующего.
 

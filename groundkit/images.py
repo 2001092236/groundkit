@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import struct
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -87,6 +88,66 @@ class ImageResult:
         }
 
 
+def image_size(data: bytes) -> tuple[int, int] | None:
+    """Реальные размеры картинки из её байтов: JPEG, PNG, GIF, WEBP (VP8X/VP8L/VP8).
+
+    Нужно потому, что провайдер не обязан выдать запрошенный размер: Cloudflare FLUX,
+    например, всегда отдаёт 1024×1024, что бы у него ни просили.
+    """
+    if data[:2] == b"\xff\xd8":  # JPEG: ищем маркер SOF
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7 or marker == 0xFF:
+                i += 2
+                continue
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                height, width = struct.unpack(">HH", data[i + 5:i + 9])
+                return width, height
+            i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+        width, height = struct.unpack(">II", data[16:24])
+        return width, height
+    if data[:3] == b"GIF" and len(data) >= 10:
+        width, height = struct.unpack("<HH", data[6:10])
+        return width, height
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP" and len(data) >= 30:
+        chunk = data[12:16]
+        if chunk == b"VP8X":
+            width = int.from_bytes(data[24:27], "little") + 1
+            height = int.from_bytes(data[27:30], "little") + 1
+            return width, height
+        if chunk == b"VP8 ":
+            width, height = struct.unpack("<HH", data[26:30])
+            return width & 0x3FFF, height & 0x3FFF
+    return None
+
+
+def _send(send, *, retries: int, delay: float, label: str) -> httpx.Response:
+    """Выполняет запрос с повторами на обрывах связи.
+
+    Провайдеры картинок держат соединение десятки секунд, и обрыв TLS на середине —
+    обычное дело. Повторяем только сетевые сбои: ответ с кодом ошибки повторять незачем.
+    """
+    last: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return send()
+        except httpx.TransportError as exc:
+            last = exc
+            if attempt < retries:
+                log.warning("%s: попытка %d не удалась (%s), повторяю", label, attempt + 1, exc)
+                time.sleep(delay * (attempt + 1))
+        except httpx.HTTPError as exc:
+            last = exc
+            break
+    raise ImageError(f"{label}: {type(last).__name__}: {last}") from last
+
+
 class ImageProvider(Protocol):
     name: str
 
@@ -111,6 +172,8 @@ class Pollinations:
     private: bool = True
     enhance: bool = False
     timeout: float = 180.0
+    retries: int = 2
+    retry_delay: float = 2.0
     base_url: str = "https://image.pollinations.ai"
 
     @property
@@ -144,12 +207,14 @@ class Pollinations:
         ledger = get_ledger()
         started = time.monotonic()
         try:
-            resp = httpx.get(url, params=params, headers=self._headers(), timeout=self.timeout,
-                             follow_redirects=True)
-        except httpx.HTTPError as exc:
-            err = ImageError(f"Pollinations: {type(exc).__name__}: {exc}")
+            resp = _send(
+                lambda: httpx.get(url, params=params, headers=self._headers(), timeout=self.timeout,
+                                  follow_redirects=True),
+                retries=self.retries, delay=self.retry_delay, label="Pollinations",
+            )
+        except ImageError as err:
             ledger.record(self.name, ok=False, latency_s=time.monotonic() - started, error=str(err))
-            raise err from exc
+            raise
         latency = time.monotonic() - started
         if resp.status_code >= 400 or not resp.headers.get("content-type", "").startswith("image/"):
             detail = resp.text[:200]
@@ -163,9 +228,10 @@ class Pollinations:
                           rate_limited=resp.status_code == 429, headers=dict(resp.headers))
             raise err
         ledger.record(self.name, ok=True, latency_s=latency, headers=dict(resp.headers))
+        actual = image_size(resp.content) or (width, height)
         return ImageResult(
             data=resp.content, content_type=resp.headers["content-type"], provider="pollinations",
-            model=self.model, prompt=prompt, width=width, height=height, seed=seed, latency_s=latency,
+            model=self.model, prompt=prompt, width=actual[0], height=actual[1], seed=seed, latency_s=latency,
         )
 
 
@@ -177,7 +243,11 @@ class CloudflareImages:
     api_key: str = field(default_factory=lambda: os.getenv("CLOUDFLARE_API_KEY", ""))
     account_id: str = field(default_factory=lambda: os.getenv("CLOUDFLARE_ACCOUNT_ID", ""))
     steps: int = 4
+    # FLUX.1 schnell отвергает запрос целиком, если прислать ему seed или размеры.
+    supports_seed: bool = False
     timeout: float = 120.0
+    retries: int = 2
+    retry_delay: float = 2.0
 
     @property
     def name(self) -> str:
@@ -189,18 +259,20 @@ class CloudflareImages:
         if not (self.api_key and self.account_id):
             raise ImageNotConfigured("Нужны CLOUDFLARE_API_KEY и CLOUDFLARE_ACCOUNT_ID")
         body: dict = {"prompt": prompt, "steps": self.steps}
-        if seed is not None:
+        if seed is not None and self.supports_seed:
             body["seed"] = seed
         url = f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run/{self.model}"
         ledger = get_ledger()
         started = time.monotonic()
         try:
-            resp = httpx.post(url, json=body, headers={"Authorization": f"Bearer {self.api_key}"},
-                              timeout=self.timeout)
-        except httpx.HTTPError as exc:
-            err = ImageError(f"Cloudflare: {type(exc).__name__}: {exc}")
+            resp = _send(
+                lambda: httpx.post(url, json=body, headers={"Authorization": f"Bearer {self.api_key}"},
+                                   timeout=self.timeout),
+                retries=self.retries, delay=self.retry_delay, label="Cloudflare",
+            )
+        except ImageError as err:
             ledger.record(self.name, ok=False, latency_s=time.monotonic() - started, error=str(err))
-            raise err from exc
+            raise
         latency = time.monotonic() - started
         if resp.status_code >= 400:
             detail = resp.text[:200]
@@ -220,9 +292,11 @@ class CloudflareImages:
             ledger.record(self.name, ok=False, latency_s=latency, error=str(err))
             raise err
         ledger.record(self.name, ok=True, latency_s=latency, headers=dict(resp.headers))
+        data = base64.b64decode(encoded)
+        actual = image_size(data) or size   # FLUX сам решает размер и запрошенный игнорирует
         return ImageResult(
-            data=base64.b64decode(encoded), content_type="image/jpeg", provider="cloudflare",
-            model=self.model, prompt=prompt, width=size[0], height=size[1], seed=seed, latency_s=latency,
+            data=data, content_type="image/jpeg", provider="cloudflare",
+            model=self.model, prompt=prompt, width=actual[0], height=actual[1], seed=seed, latency_s=latency,
         )
 
 
