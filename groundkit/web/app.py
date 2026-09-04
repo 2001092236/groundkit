@@ -5,6 +5,8 @@
   GET  /api/config     — что настроено (поиск, модели, пресеты доменов, лимиты)
   POST /api/search     — только поиск
   POST /api/ask        — поиск + модель + проверка ссылок
+  POST /api/image      — генерация картинки (выключается GROUNDKIT_IMAGES=0)
+  GET  /api/usage      — учёт лимитов
   GET  /api/health
 """
 
@@ -26,6 +28,13 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..answer import Answerer
+from ..images import (
+    IMAGE_PROVIDER_INFO,
+    ImageError,
+    ImageRateLimited,
+    generate_image,
+    image_provider_configured,
+)
 from ..llm import CLAUDE_CLI_ENV, LLMError, claude_cli_enabled, default_chain, list_models
 from ..search import PROVIDER_INFO, provider_configured, run_search
 from ..usage import get_ledger
@@ -40,6 +49,8 @@ RPD = int(os.getenv("GROUNDKIT_RPD", "80"))
 TRUST_PROXY = os.getenv("GROUNDKIT_TRUST_PROXY", "").lower() in {"1", "true", "yes"}
 ACCESS_TOKEN = os.getenv("GROUNDKIT_ACCESS_TOKEN", "")
 DEFAULT_SEARCH = [s.strip() for s in os.getenv("GROUNDKIT_SEARCH", "searxng,ddg").split(",") if s.strip()]
+# Картинки на публичном демо можно выключить: GROUNDKIT_IMAGES=0
+IMAGES_ENABLED = os.getenv("GROUNDKIT_IMAGES", "1").lower() not in {"0", "false", "no"}
 PUBLIC_URL = os.getenv("GROUNDKIT_PUBLIC_URL", "")
 
 DOMAIN_PRESETS = {
@@ -110,6 +121,14 @@ class AskIn(SearchIn):
     rewrite_query: bool = True
 
 
+class ImageIn(BaseModel):
+    prompt: str = Field(min_length=2, max_length=500)
+    provider: list[str] = Field(default_factory=list, max_length=3)
+    width: int = Field(default=1024, ge=128, le=1536)
+    height: int = Field(default=1024, ge=128, le=1536)
+    seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
+
+
 def _models_for_request(requested: list[str]) -> list[str]:
     allowed = {m["model"] for m in list_models()}
     chain = [m for m in requested if m in allowed] or default_chain()
@@ -142,6 +161,9 @@ def config() -> dict:
         "search": [{"name": n, **info, "configured": provider_configured(n), "default": n in DEFAULT_SEARCH}
                    for n, info in PROVIDER_INFO.items()],
         "models": models,
+        "images_enabled": IMAGES_ENABLED,
+        "image_providers": [{"name": n, **info, "configured": image_provider_configured(n)}
+                            for n, info in IMAGE_PROVIDER_INFO.items()],
         "default_chain": [m for m in default_chain() if claude_cli_enabled() or not m.startswith("claude-cli")],
         "presets": DOMAIN_PRESETS,
         "limits": {"rpm": RPM, "rpd": RPD},
@@ -172,6 +194,25 @@ def _openrouter_live() -> dict | None:
         data = {"error": str(exc)[:100]}
     _openrouter_cache.update(at=time.monotonic(), data=data)
     return data
+
+
+@app.post("/api/image")
+async def api_image(body: ImageIn, request: Request) -> JSONResponse:
+    """Генерация картинки. Ответ — метаданные плюс сама картинка как data-URI."""
+    if not IMAGES_ENABLED:
+        return JSONResponse(status_code=503, content={"error": "images_disabled",
+                                                      "detail": "Генерация картинок на этом сервере выключена."})
+    _guard(request)
+    providers = [p for p in body.provider if p in IMAGE_PROVIDER_INFO] or None
+    try:
+        image = await run_in_threadpool(
+            generate_image, body.prompt, providers, size=(body.width, body.height), seed=body.seed
+        )
+    except ImageRateLimited as exc:
+        return JSONResponse(status_code=429, content={"error": "rate_limited", "detail": str(exc)[:400]})
+    except ImageError as exc:
+        return JSONResponse(status_code=502, content={"error": "image_failed", "detail": str(exc)[:600]})
+    return JSONResponse(content={**image.to_dict(), "data_uri": image.to_data_uri()})
 
 
 @app.get("/api/usage")

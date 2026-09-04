@@ -132,6 +132,17 @@
   .notice code { font-family: var(--mono); font-size: 13px; }
   .notice ol { margin: 8px 0 0; padding-left: 20px; }
 
+  .modes { display: inline-flex; gap: 4px; margin-top: 24px; padding: 4px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 999px; }
+  .mode { border: 0; background: transparent; color: var(--ink-2); border-radius: 999px; padding: 7px 16px; font-size: 14px; cursor: pointer; min-height: 36px; }
+  .mode:hover { color: var(--ink); }
+  .mode[aria-selected="true"] { background: #fff; color: var(--ink); font-weight: 500; box-shadow: 0 1px 2px rgba(28,25,23,.08); }
+
+  .shot { margin: 0; background: #fff; border: 1px solid var(--line); border-radius: var(--r-lg); padding: 12px; }
+  .shot img { display: block; width: 100%; height: auto; border-radius: var(--r); background: var(--paper-2); }
+  .shot figcaption { margin-top: 10px; font-size: 13px; color: var(--ink-2); display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .shot figcaption code { font-family: var(--mono); font-size: 12.5px; }
+  .shot figcaption a { margin-left: auto; }
+
   .limits { margin-top: 44px; border-top: 1px solid var(--line); padding-top: 28px; }
   .limits h2 { font: 600 22px/1.2 var(--serif); margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
   .limits p.sub { color: var(--ink-2); margin: 0 0 16px; font-size: 14.5px; max-width: 680px; }
@@ -185,6 +196,11 @@
     <h1>Ответы, в которых каждая ссылка сверена с выдачей.</h1>
     <p class="lead">Бесплатная модель отвечает <b>только по найденным источникам</b> с разрешённых доменов. Придуманные ссылки и несуществующие номера источников вырезаются программно и показываются здесь же.</p>
 
+    <div class="modes" role="tablist" id="modes" hidden>
+      <button type="button" class="mode" role="tab" data-mode="ask" aria-selected="true">Ответ с источниками</button>
+      <button type="button" class="mode" role="tab" data-mode="image" aria-selected="false">Картинка</button>
+    </div>
+
     <form class="askbox" id="form">
       <label class="visually-hidden" for="q">Вопрос</label>
       <textarea id="q" rows="2" placeholder="Например: в какой форме заключается договор аренды здания по ГК РФ?" maxlength="500" required></textarea>
@@ -210,7 +226,7 @@
       </div>
     </form>
 
-    <details class="advanced">
+    <details class="advanced" id="advanced">
       <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg> Настройки: домены, поиск, адрес сервера</summary>
       <div class="adv-grid">
         <label class="full">Разрешённые домены (через запятую; пусто — без ограничений)
@@ -232,6 +248,47 @@
     </details>
 
     <div class="examples" id="examples"></div>
+
+    <form class="askbox" id="imageForm" hidden>
+      <label class="visually-hidden" for="ip">Что нарисовать</label>
+      <textarea id="ip" rows="2" placeholder="Например: обложка технической документации, минимализм, тёплая бумага" maxlength="500" required></textarea>
+      <div class="askbar">
+        <div class="chips">
+          <label class="chip" title="Провайдер картинок">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="1.6"/><path d="m21 15-5-5L5 21"/></svg>
+            <select id="imgProvider"></select>
+          </label>
+          <label class="chip" title="Размер картинки">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            <select id="imgSize">
+              <option value="1024x1024" selected>1024 × 1024</option>
+              <option value="768x512">768 × 512</option>
+              <option value="512x768">512 × 768</option>
+              <option value="1280x720">1280 × 720</option>
+            </select>
+          </label>
+          <label class="chip" title="Одинаковый seed даёт одинаковую картинку">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><circle cx="8.5" cy="8.5" r="1.2"/><circle cx="15.5" cy="15.5" r="1.2"/><circle cx="12" cy="12" r="1.2"/></svg>
+            <input id="imgSeed" type="number" min="0" placeholder="seed" style="width:74px;border:0;background:transparent;outline:none;font-size:13px">
+          </label>
+        </div>
+        <button class="btn" id="imgGo" type="submit">
+          Нарисовать
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </form>
+
+    <div class="examples" id="imageExamples" hidden></div>
+  </section>
+
+  <section class="result" id="imageResult">
+    <h2 class="q" id="ipq"></h2>
+    <div id="imageNotice"></div>
+    <figure class="shot" id="shot" hidden>
+      <img id="shotImg" alt="">
+      <figcaption id="shotMeta"></figcaption>
+    </figure>
   </section>
 
   <div class="status" id="status" hidden></div>
@@ -385,7 +442,8 @@
     const q = $("q").value.trim();
     if (q.length < 2) return;
     busy = true; $("go").disabled = true;
-    $("result").classList.add("show"); $("rq").textContent = q; showNotice(); show([]);
+    $("result").classList.add("show"); $("result").dataset.filled = "1";
+    $("rq").textContent = q; showNotice(); show([]);
     const body = {
       query: q,
       domains: $("domains").value.split(",").map((s) => s.trim()).filter(Boolean),
@@ -428,6 +486,62 @@
       clearTimeout(timer); clearTimeout(timer2); setStatus(null);
       showNotice("bad", `<b>Сервер недоступен:</b> <code>${esc(apiBase() || location.origin)}</code>. ${esc(e.message)}. Проверьте адрес API в настройках или запустите локально: <code>groundkit serve</code>.`);
     } finally { busy = false; $("go").disabled = false; loadUsage(); }
+  }
+
+  const IMAGE_EXAMPLES = [
+    "обложка технической документации, минимализм, тёплая бумага",
+    "схема: запрос, поиск, модель, проверка ссылок — плоская инфографика",
+    "маяк на скале в тумане, спокойная графика",
+  ];
+
+  function setMode(mode) {
+    for (const b of document.querySelectorAll(".mode")) b.setAttribute("aria-selected", String(b.dataset.mode === mode));
+    const image = mode === "image";
+    $("form").hidden = image; $("examples").hidden = image; $("advanced").hidden = image;
+    $("imageForm").hidden = !image; $("imageExamples").hidden = !image;
+    $("result").classList.toggle("show", !image && $("result").dataset.filled === "1");
+    $("imageResult").classList.toggle("show", image && $("imageResult").dataset.filled === "1");
+    (image ? $("ip") : $("q")).focus();
+    store.set("mode", mode);
+  }
+
+  function showImageNotice(kind, html) {
+    $("imageNotice").innerHTML = html ? `<div class="notice ${kind}">${html}</div>` : "";
+  }
+
+  async function draw(ev) {
+    ev && ev.preventDefault();
+    if (busy) return;
+    const prompt = $("ip").value.trim();
+    if (prompt.length < 2) return;
+    busy = true; $("imgGo").disabled = true;
+    const [w, h] = $("imgSize").value.split("x").map(Number);
+    const seed = $("imgSeed").value.trim();
+    $("imageResult").classList.add("show"); $("imageResult").dataset.filled = "1";
+    $("ipq").textContent = prompt; $("shot").hidden = true; showImageNotice();
+    setStatus(2, "Рисуем… первый запрос может ждать очереди");
+    try {
+      const r = await fetch(apiBase() + "/api/image", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, provider: $("imgProvider").value ? [$("imgProvider").value] : [],
+                               width: w, height: h, seed: seed === "" ? null : Number(seed) }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        showImageNotice(r.status === 429 ? "warn" : "bad",
+          `<b>Не получилось.</b> ${esc(d.detail || d.error || r.statusText || "ошибка " + r.status)}`);
+      } else {
+        $("shotImg").src = d.data_uri;
+        $("shotImg").alt = prompt;
+        $("shotMeta").innerHTML = `<span>${d.width}×${d.height}</span><span><code>${esc(d.provider)}/${esc(d.model)}</code></span>`
+          + `<span>${Math.round(d.bytes / 1024)} КБ · ${d.latency_s} с</span>`
+          + (d.seed != null ? `<span>seed ${d.seed}</span>` : "")
+          + `<a href="${d.data_uri}" download="groundkit${d.content_type === "image/png" ? ".png" : ".jpg"}">скачать</a>`;
+        $("shot").hidden = false;
+      }
+    } catch (e) {
+      showImageNotice("bad", `<b>Сервер недоступен:</b> <code>${esc(apiBase() || location.origin)}</code>. ${esc(e.message)}`);
+    } finally { busy = false; $("imgGo").disabled = false; setStatus(null); loadUsage(); }
   }
 
   function fmtTime(iso) {
@@ -488,11 +602,18 @@
       ...search.map((s) => [s.name, `${s.label}${s.configured ? "" : " — нет ключа"}`, !s.configured])]);
     $("searchHint").textContent = "Первый, кто вернул результаты, побеждает.";
     if (cfg && cfg.limits) $("limitsFooter").textContent = `${cfg.limits.rpm} запросов в минуту и ${cfg.limits.rpd} в сутки`;
+    const imgs = (cfg && cfg.images_enabled && cfg.image_providers) ? cfg.image_providers.filter((p) => p.configured) : [];
+    $("modes").hidden = imgs.length === 0;
+    if (imgs.length) {
+      fillOptions($("imgProvider"), [["", `авто: ${imgs.map((p) => p.name).join(" → ")}`],
+        ...imgs.map((p) => [p.name, p.label])]);
+      setMode(store.get("mode", "ask") === "image" ? "image" : "ask");
+    }
     if (cfg === null) showNoticeTop();
     else loadUsage();
   }
   function showNoticeTop() {
-    $("result").classList.add("show"); $("rq").textContent = ""; show([]);
+    $("result").classList.add("show"); $("result").dataset.filled = "1"; $("rq").textContent = ""; show([]);
     showNotice("bad", `<b>Сервер API не отвечает:</b> <code>${esc(apiBase() || location.origin)}</code>. Укажите адрес в настройках или запустите локально: <code>pip install "groundkit[web,ddg]" && groundkit serve</code>.`);
   }
 
@@ -502,6 +623,13 @@
   $("fetchToggle").onclick = () => { const b = $("fetchToggle"); b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") !== "true"); };
   $("form").onsubmit = ask;
   $("q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } });
+
+  $("imageExamples").innerHTML = IMAGE_EXAMPLES.map((p, i) => `<button type="button" data-i="${i}">${esc(p)}</button>`).join("");
+  $("imageExamples").onclick = (e) => { const b = e.target.closest("button"); if (!b) return;
+    $("ip").value = IMAGE_EXAMPLES[+b.dataset.i]; draw(); };
+  $("imageForm").onsubmit = draw;
+  $("ip").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); draw(); } });
+  $("modes").onclick = (e) => { const b = e.target.closest(".mode"); if (b) setMode(b.dataset.mode); };
   $("api").value = store.get("api", ""); $("api").onchange = () => { store.set("api", $("api").value.trim()); loadConfig(); };
   // Ссылка вида ?q=вопрос&preset=Право РФ&run=1 открывает страницу с готовым вопросом и сразу запускает его.
   const params = new URLSearchParams(location.search);

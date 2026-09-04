@@ -83,3 +83,51 @@ def test_usage_endpoint(client, monkeypatch):
     row = next(r for r in body["models"] if r["model"] == "groq/qwen/qwen3.8-27b")
     assert row["used_today"] == 1 and row["rpd"] == 1000 and row["remaining"] == 999
     assert "days" in body and body["openrouter"] is None
+
+
+def test_image_endpoint_returns_data_uri(client, monkeypatch):
+    from groundkit.images import ImageResult
+
+    img = ImageResult(data=b"\xff\xd8bytes", content_type="image/jpeg", provider="pollinations",
+                      model="sana", prompt="кот", width=768, height=512, seed=3, latency_s=1.2)
+    seen = {}
+
+    def fake(prompt, providers, *, size, seed):
+        seen.update(prompt=prompt, providers=providers, size=size, seed=seed)
+        return img
+
+    monkeypatch.setattr(webapp, "generate_image", fake)
+    r = client.post("/api/image", json={"prompt": "кот", "width": 768, "height": 512, "seed": 3,
+                                        "provider": ["pollinations", "выдуманный"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["data_uri"].startswith("data:image/jpeg;base64,") and body["width"] == 768
+    assert seen["providers"] == ["pollinations"] and seen["size"] == (768, 512) and seen["seed"] == 3
+
+
+def test_image_endpoint_reports_failures(client, monkeypatch):
+    from groundkit.images import ImageError, ImageRateLimited
+
+    monkeypatch.setattr(webapp, "generate_image",
+                        lambda *a, **k: (_ for _ in ()).throw(ImageRateLimited("подожди")))
+    assert client.post("/api/image", json={"prompt": "кот"}).status_code == 429
+    monkeypatch.setattr(webapp, "generate_image",
+                        lambda *a, **k: (_ for _ in ()).throw(ImageError("всё сломалось")))
+    r = client.post("/api/image", json={"prompt": "кот"})
+    assert r.status_code == 502 and r.json()["error"] == "image_failed"
+
+
+def test_image_endpoint_validates_and_can_be_disabled(client, monkeypatch):
+    assert client.post("/api/image", json={"prompt": "к"}).status_code == 422
+    assert client.post("/api/image", json={"prompt": "кот", "width": 4000}).status_code == 422
+    monkeypatch.setattr(webapp, "IMAGES_ENABLED", False)
+    r = client.post("/api/image", json={"prompt": "кот"})
+    assert r.status_code == 503 and r.json()["error"] == "images_disabled"
+
+
+def test_config_lists_image_providers(client):
+    cfg = client.get("/api/config").json()
+    assert cfg["images_enabled"] is True
+    names = {p["name"]: p for p in cfg["image_providers"]}
+    assert names["pollinations"]["configured"] is True      # работает без ключа
+    assert names["cloudflare"]["configured"] is False       # ключей в тестах нет
