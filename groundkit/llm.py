@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .usage import get_ledger
+
 log = logging.getLogger("groundkit.llm")
 
 Message = dict[str, str]
@@ -64,6 +66,17 @@ class LLMProvider(Protocol):
     ) -> LLMResponse: ...
 
 
+def _error_headers(exc: Exception) -> dict | None:
+    """Заголовки ответа из исключения LiteLLM/OpenAI-совместимого клиента, если они есть."""
+    for candidate in (getattr(exc, "headers", None), getattr(getattr(exc, "response", None), "headers", None)):
+        if candidate:
+            try:
+                return dict(candidate)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 def _classify(exc: Exception) -> LLMError:
     name = type(exc).__name__
     text = str(exc).lower()
@@ -95,6 +108,7 @@ class LiteLLM:
 
         litellm.suppress_debug_info = True
         started = time.monotonic()
+        ledger = get_ledger()
         try:
             response = litellm.completion(
                 model=self.model,
@@ -104,7 +118,10 @@ class LiteLLM:
                 timeout=self.timeout,
             )
         except Exception as exc:  # noqa: BLE001 — классифицируем и пробрасываем
-            raise _classify(exc) from exc
+            err = _classify(exc)
+            ledger.record(self.model, ok=False, latency_s=time.monotonic() - started, error=str(err),
+                          rate_limited=isinstance(err, RateLimited), headers=_error_headers(exc))
+            raise err from exc
 
         text = response.choices[0].message.content or ""
         usage = getattr(response, "usage", None)
@@ -113,7 +130,7 @@ class LiteLLM:
             cost = float(litellm.completion_cost(completion_response=response))
         except Exception:  # noqa: BLE001 — для бесплатных моделей цены может не быть
             cost = None
-        return LLMResponse(
+        result = LLMResponse(
             text=text,
             model=self.model,
             provider="litellm",
@@ -122,6 +139,10 @@ class LiteLLM:
             output_tokens=getattr(usage, "completion_tokens", None),
             cost_usd=cost,
         )
+        hidden = getattr(response, "_hidden_params", None) or {}
+        ledger.record(self.model, ok=True, input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                      cost_usd=cost, latency_s=result.latency_s, headers=hidden.get("additional_headers"))
+        return result
 
 
 @dataclass
@@ -201,15 +222,22 @@ class ClaudeCLI:
         if data.get("is_error"):
             lowered = result.lower()
             if "not logged in" in lowered or "login" in lowered:
-                raise NotConfigured(f"claude CLI: {result[:300]}")
-            if "rate limit" in lowered or "usage limit" in lowered:
-                raise RateLimited(f"claude CLI: {result[:300]}")
-            raise LLMError(f"claude CLI: {result[:300]}")
+                err: LLMError = NotConfigured(f"claude CLI: {result[:300]}")
+            elif "rate limit" in lowered or "usage limit" in lowered:
+                err = RateLimited(f"claude CLI: {result[:300]}")
+            else:
+                err = LLMError(f"claude CLI: {result[:300]}")
+            get_ledger().record(self.name, ok=False, error=str(err), rate_limited=isinstance(err, RateLimited),
+                                latency_s=time.monotonic() - started)
+            raise err
 
         usage = data.get("usage") or {}
         used_models = [m for m in (data.get("modelUsage") or {}) if "haiku" not in m] or list(
             data.get("modelUsage") or {}
         )
+        get_ledger().record(self.name, ok=True, input_tokens=usage.get("input_tokens"),
+                            output_tokens=usage.get("output_tokens"), cost_usd=data.get("total_cost_usd"),
+                            latency_s=time.monotonic() - started)
         return LLMResponse(
             text=result,
             model=used_models[0] if used_models else self.name,
@@ -223,20 +251,34 @@ class ClaudeCLI:
 
 # Известные бесплатные/дешёвые модели: как их включить и на что рассчитывать.
 KNOWN_MODELS: list[dict] = [
-    {"model": "gemini/gemini-flash-latest", "label": "Google Gemini Flash", "env": "GEMINI_API_KEY",
-     "free": "~1500 запросов/день", "signup": "https://aistudio.google.com/apikey"},
-    {"model": "groq/llama-3.3-70b-versatile", "label": "Groq · Llama 3.3 70B", "env": "GROQ_API_KEY",
-     "free": "14 400 запросов/день", "signup": "https://console.groq.com/keys"},
-    {"model": "openrouter/meta-llama/llama-3.3-70b-instruct:free", "label": "OpenRouter · free-модели",
-     "env": "OPENROUTER_API_KEY", "free": "50 запросов/день", "signup": "https://openrouter.ai/keys"},
+    {"model": "groq/qwen/qwen3.8-27b", "label": "Groq · Qwen 3.8 27B", "env": "GROQ_API_KEY",
+     "free": "1000 запросов/день, 30 RPM, 8K токенов/мин", "rpd": 1000, "rpm": 30,
+     "signup": "https://console.groq.com/keys"},
+    {"model": "groq/openai/gpt-oss-120b", "label": "Groq · GPT-OSS 120B", "env": "GROQ_API_KEY",
+     "free": "1000 запросов/день, 30 RPM, 8K токенов/мин", "rpd": 1000, "rpm": 30,
+     "signup": "https://console.groq.com/keys"},
+    {"model": "cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast", "label": "Cloudflare · Llama 3.3 70B",
+     "env": "CLOUDFLARE_API_KEY", "free": "10 000 нейронов/день", "rpd": None, "rpm": None,
+     "signup": "https://dash.cloudflare.com"},
+    {"model": "openrouter/google/gemma-4-26b-a4b-it:free", "label": "OpenRouter · Gemma 4 26B (free)",
+     "env": "OPENROUTER_API_KEY", "free": "50 запросов/день на все free-модели, 20 RPM", "rpd": 50, "rpm": 20,
+     "signup": "https://openrouter.ai/keys"},
+    {"model": "openrouter/google/gemma-4-31b-it:free", "label": "OpenRouter · Gemma 4 31B (free)",
+     "env": "OPENROUTER_API_KEY", "free": "50 запросов/день на все free-модели, 20 RPM", "rpd": 50, "rpm": 20,
+     "signup": "https://openrouter.ai/keys"},
     {"model": "mistral/mistral-small-latest", "label": "Mistral Small", "env": "MISTRAL_API_KEY",
-     "free": "1 млрд токенов/мес, 2 RPM", "signup": "https://console.mistral.ai/api-keys"},
-    {"model": "cerebras/llama3.1-8b", "label": "Cerebras · Llama 3.1 8B", "env": "CEREBRAS_API_KEY",
-     "free": "1M токенов/день", "signup": "https://cloud.cerebras.ai"},
+     "free": "1 млрд токенов/мес, 2 RPM — нужен план Experiment", "rpd": None, "rpm": 2,
+     "signup": "https://console.mistral.ai/api-keys"},
+    {"model": "cerebras/gpt-oss-120b", "label": "Cerebras · GPT-OSS 120B", "env": "CEREBRAS_API_KEY",
+     "free": "14 400 запросов/день, 1M токенов/день", "rpd": 14400, "rpm": 30,
+     "signup": "https://cloud.cerebras.ai"},
+    {"model": "gemini/gemini-flash-latest", "label": "Google Gemini Flash", "env": "GEMINI_API_KEY",
+     "free": "~1500 запросов/день, 15 RPM", "rpd": 1500, "rpm": 15, "signup": "https://aistudio.google.com/apikey"},
     {"model": "anthropic/claude-haiku-4-5-20251001", "label": "Anthropic · Claude Haiku 4.5 (платно)",
-     "env": "ANTHROPIC_API_KEY", "free": "нет, платный API", "signup": "https://console.anthropic.com"},
+     "env": "ANTHROPIC_API_KEY", "free": "нет, платный API", "rpd": None, "rpm": None,
+     "signup": "https://console.anthropic.com"},
     {"model": "claude-cli", "label": "Claude Code CLI (локальные эксперименты)", "env": None,
-     "free": "в рамках подписки", "signup": "https://docs.anthropic.com/claude-code"},
+     "free": "в рамках подписки", "rpd": None, "rpm": None, "signup": "https://docs.anthropic.com/claude-code"},
 ]
 
 CLAUDE_CLI_ENV = "GROUNDKIT_CLAUDE_CLI"
@@ -256,6 +298,7 @@ def model_configured(spec: str) -> bool:
     env_by_prefix = {
         "gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY",
         "mistral": "MISTRAL_API_KEY", "cerebras": "CEREBRAS_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
+        "cloudflare": "CLOUDFLARE_API_KEY", "dashscope": "DASHSCOPE_API_KEY",
         "openai": "OPENAI_API_KEY", "together_ai": "TOGETHER_API_KEY", "deepseek": "DEEPSEEK_API_KEY",
     }
     env = env_by_prefix.get(prefix)
@@ -295,8 +338,16 @@ def complete_with_fallback(
             f"или включите Claude CLI: {CLAUDE_CLI_ENV}=1"
         )
     attempts: list[dict] = []
-    for spec in models:
-        provider = build_llm(spec)
+    providers = [build_llm(spec) for spec in models]
+    ledger = get_ledger()
+    blocked = {p.name: ledger.blocked_until(p.name) for p in providers}
+    skip_blocked = any(not blocked[p.name] for p in providers)  # если заблокированы все — всё равно пробуем
+    for provider in providers:
+        until = blocked.get(provider.name)
+        if until and skip_blocked:
+            attempts.append({"model": provider.name, "ok": False, "skipped": True,
+                             "error": f"пропущена: лимит исчерпан до {until.strftime('%H:%M')} UTC"})
+            continue
         started = time.monotonic()
         try:
             response = provider.complete(messages, temperature=temperature, max_tokens=max_tokens)

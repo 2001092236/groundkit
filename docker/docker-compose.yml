@@ -38,6 +38,9 @@ services:
       - GROUNDKIT_RPM=${GROUNDKIT_RPM:-6}
       - GROUNDKIT_RPD=${GROUNDKIT_RPD:-80}
       - GROUNDKIT_PUBLIC_URL=https://${GROUNDKIT_DOMAIN:-localhost}
+      - GROUNDKIT_USAGE_FILE=/data/usage.json
+    volumes:
+      - usage_data:/data
     depends_on:
       - searxng
     expose:
@@ -64,3 +67,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  usage_data:

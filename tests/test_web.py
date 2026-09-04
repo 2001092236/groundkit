@@ -28,7 +28,7 @@ def test_config_lists_providers_and_presets(client, monkeypatch):
     assert all(not m["model"].startswith("claude-cli") for m in cfg["models"])  # выключен по умолчанию
     monkeypatch.setenv("GROQ_API_KEY", "k")
     cfg = client.get("/api/config").json()
-    assert cfg["default_chain"] == ["groq/llama-3.3-70b-versatile"]
+    assert cfg["default_chain"] == ["groq/qwen/qwen3.8-27b", "groq/openai/gpt-oss-120b"]
 
 
 def test_ask_without_models_returns_sources_and_503(client, monkeypatch):
@@ -44,10 +44,10 @@ def test_ask_without_models_returns_sources_and_503(client, monkeypatch):
 def test_ask_happy_path(client, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "k")
     answer = Answer(answer="Ответ [1]", sources=[SearchResult("t", "https://a.ru", "s", index=1)], search_provider="ddg",
-                    model="groq/llama-3.3-70b-versatile", cited=[1],
-                    llm=LLMResponse("Ответ [1]", "groq/llama-3.3-70b-versatile", "litellm"))
+                    model="groq/qwen/qwen3.8-27b", cited=[1],
+                    llm=LLMResponse("Ответ [1]", "groq/qwen/qwen3.8-27b", "litellm"))
     monkeypatch.setattr(webapp.Answerer, "ask", lambda self, q: answer)
-    r = client.post("/api/ask", json={"query": "вопрос", "domains": ["a.ru"], "model": ["groq/llama-3.3-70b-versatile"]})
+    r = client.post("/api/ask", json={"query": "вопрос", "domains": ["a.ru"], "model": ["groq/qwen/qwen3.8-27b"]})
     assert r.status_code == 200 and r.json()["answer"] == "Ответ [1]" and r.json()["cited"] == [1]
 
 
@@ -72,3 +72,14 @@ def test_access_token(client, monkeypatch):
     monkeypatch.setattr(webapp, "run_search", lambda *a, **k: SearchRun([], ""))
     assert client.post("/api/search", json={"query": "вопрос"}).status_code == 401
     assert client.post("/api/search", json={"query": "вопрос"}, headers={"X-Access-Token": "secret"}).status_code == 200
+
+
+def test_usage_endpoint(client, monkeypatch):
+    monkeypatch.setattr(webapp, "_openrouter_live", lambda: None)
+    from groundkit.usage import get_ledger
+
+    get_ledger().record("groq/qwen/qwen3.8-27b", ok=True, input_tokens=5, output_tokens=1)
+    body = client.get("/api/usage").json()
+    row = next(r for r in body["models"] if r["model"] == "groq/qwen/qwen3.8-27b")
+    assert row["used_today"] == 1 and row["rpd"] == 1000 and row["remaining"] == 999
+    assert "days" in body and body["openrouter"] is None

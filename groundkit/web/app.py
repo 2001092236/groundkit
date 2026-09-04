@@ -15,6 +15,7 @@ import os
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -27,6 +28,7 @@ from .. import __version__
 from ..answer import Answerer
 from ..llm import CLAUDE_CLI_ENV, LLMError, claude_cli_enabled, default_chain, list_models
 from ..search import PROVIDER_INFO, provider_configured, run_search
+from ..usage import get_ledger
 
 log = logging.getLogger("groundkit.web")
 
@@ -147,6 +149,43 @@ def config() -> dict:
         "claude_cli_env": CLAUDE_CLI_ENV,
         "access_token_required": bool(ACCESS_TOKEN),
         "public_url": PUBLIC_URL,
+    }
+
+
+_openrouter_cache: dict = {"at": 0.0, "data": None}
+
+
+def _openrouter_live() -> dict | None:
+    """Живой остаток по ключу OpenRouter (usage за день/месяц, лимит). Кэш на минуту."""
+    key = os.getenv("OPENROUTER_API_KEY")
+    if not key:
+        return None
+    if time.monotonic() - _openrouter_cache["at"] < 60 and _openrouter_cache["data"] is not None:
+        return _openrouter_cache["data"]
+    try:
+        import httpx
+
+        resp = httpx.get("https://openrouter.ai/api/v1/auth/key",
+                         headers={"Authorization": f"Bearer {key}"}, timeout=10)
+        data = resp.json().get("data", {}) if resp.status_code == 200 else {"error": resp.status_code}
+    except Exception as exc:  # noqa: BLE001
+        data = {"error": str(exc)[:100]}
+    _openrouter_cache.update(at=time.monotonic(), data=data)
+    return data
+
+
+@app.get("/api/usage")
+def usage() -> dict:
+    """Сводка лимитов: использовано сегодня, остаток по данным провайдера, время сброса."""
+    models = [m for m in list_models() if claude_cli_enabled() or not m["model"].startswith("claude-cli")]
+    ledger = get_ledger()
+    rows = ledger.summary(models)
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "models": rows,
+        "openrouter": _openrouter_live(),
+        "days": ledger.days(),
+        "usage_file": str(ledger.path),
     }
 
 

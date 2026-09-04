@@ -164,9 +164,9 @@ def test_build_llm_specs():
 def test_model_detection_from_env(monkeypatch):
     assert default_chain() == []
     monkeypatch.setenv("GROQ_API_KEY", "k")
-    assert default_chain() == ["groq/llama-3.3-70b-versatile"]
+    assert default_chain() == ["groq/qwen/qwen3.8-27b", "groq/openai/gpt-oss-120b"]
     assert model_configured("groq/any-other") and not model_configured("gemini/x")
     monkeypatch.setenv("GROUNDKIT_CLAUDE_CLI", "1")
     monkeypatch.setattr(llm.shutil, "which", lambda _: "/usr/bin/claude")
     assert default_chain()[-1] == "claude-cli"
-    assert {m["model"] for m in list_models() if m["configured"]} == {"groq/llama-3.3-70b-versatile", "claude-cli"}
+    assert {m["model"] for m in list_models() if m["configured"]} == {"groq/qwen/qwen3.8-27b", "groq/openai/gpt-oss-120b", "claude-cli"}

@@ -132,6 +132,19 @@
   .notice code { font-family: var(--mono); font-size: 13px; }
   .notice ol { margin: 8px 0 0; padding-left: 20px; }
 
+  .limits { margin-top: 44px; border-top: 1px solid var(--line); padding-top: 28px; }
+  .limits h2 { font: 600 22px/1.2 var(--serif); margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+  .limits p.sub { color: var(--ink-2); margin: 0 0 16px; font-size: 14.5px; max-width: 680px; }
+  .limits table { width: 100%; border-collapse: collapse; font-size: 14px; background: #fff; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .limits th, .limits td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .limits th { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; background: var(--paper-2); }
+  .limits tr:last-child td { border-bottom: 0; }
+  .limits td.m { font-weight: 500; } .limits td.m small { display: block; font-weight: 400; color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; }
+  .bar { height: 6px; background: var(--paper-2); border-radius: 3px; overflow: hidden; margin-top: 5px; min-width: 90px; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .bar i.hot { background: var(--warn); } .bar i.out { background: var(--bad); }
+  .limits .muted { color: var(--ink-3); }
+  .limits .wrap-x { overflow-x: auto; }
   .how { margin-top: 64px; border-top: 1px solid var(--line); padding-top: 36px; }
   .how h2 { font: 600 26px/1.2 var(--serif); margin: 0 0 8px; }
   .how p.sub { color: var(--ink-2); margin: 0 0 22px; max-width: 640px; }
@@ -235,6 +248,13 @@
     <div class="trail" id="trail"></div>
   </section>
 
+  <section class="limits" id="limits" hidden>
+    <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 4 3 5-6"/></svg> Лимиты бесплатных моделей сегодня</h2>
+    <p class="sub">Сколько запросов ушло через это демо, сколько осталось по данным провайдера (или по известному дневному лимиту, тогда со звёздочкой) и когда счётчик обнулится. Модель с исчерпанным лимитом пропускается автоматически до времени сброса.</p>
+    <div class="wrap-x"><table id="limitsTable"></table></div>
+    <p class="sub muted" id="limitsNote" style="margin-top:10px"></p>
+  </section>
+
   <section class="how">
     <h2>Как это работает</h2>
     <p class="sub">Четыре шага. Модель не ходит в интернет сама: поиск и проверка ссылок делаются кодом, поэтому одинаково работают с любой бесплатной моделью.</p>
@@ -248,7 +268,7 @@
 
   <footer>
     <span>groundkit · MIT · <a href="https://github.com/2001092236/groundkit">исходный код</a></span>
-    <span>Демо на бесплатных лимитах: <span id="limits">несколько запросов в минуту</span> с одного адреса.</span>
+    <span>Демо на бесплатных лимитах: <span id="limitsFooter">несколько запросов в минуту</span> с одного адреса.</span>
   </footer>
 </main>
 
@@ -407,7 +427,40 @@
     } catch (e) {
       clearTimeout(timer); clearTimeout(timer2); setStatus(null);
       showNotice("bad", `<b>Сервер недоступен:</b> <code>${esc(apiBase() || location.origin)}</code>. ${esc(e.message)}. Проверьте адрес API в настройках или запустите локально: <code>groundkit serve</code>.`);
-    } finally { busy = false; $("go").disabled = false; }
+    } finally { busy = false; $("go").disabled = false; loadUsage(); }
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso), diff = (d - Date.now()) / 60000;
+    const hhmm = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    if (diff < 0) return "уже";
+    if (diff < 60) return `через ${Math.ceil(diff)} мин (${hhmm})`;
+    if (diff < 24 * 60) return `через ${Math.floor(diff / 60)} ч ${Math.round(diff % 60)} мин (${hhmm})`;
+    return d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+  async function loadUsage() {
+    let u;
+    try { u = await (await fetch(apiBase() + "/api/usage")).json(); } catch { return; }
+    const rows = u.models.filter((m) => m.configured || m.used_today);
+    if (!rows.length) return;
+    $("limits").hidden = false;
+    $("limitsTable").innerHTML = `<tr><th>Модель</th><th>Сегодня</th><th>Осталось</th><th>Сброс</th><th>Статус</th></tr>` + rows.map((m) => {
+      const limit = m.rpd || (m.provider && (m.provider.limit_requests_day || m.provider.limit_requests));
+      const rem = m.remaining, used = m.used_today;
+      const pct = limit ? Math.min(100, Math.round(((rem != null ? limit - rem : used) / limit) * 100)) : 0;
+      const cls = pct >= 100 ? "out" : pct >= 80 ? "hot" : "";
+      const status = m.blocked_until ? `<span class="tag bad">лимит</span> до ${esc(fmtTime(m.blocked_until))}`
+        : (m.last_error && !m.ok_today && m.used_today) ? `<span class="tag bad">ошибка</span> ${esc(m.last_error.slice(0, 60))}`
+        : m.used_today ? `<span class="tag ok">ok</span>` : `<span class="tag">не вызывалась</span>`;
+      return `<tr><td class="m">${esc(m.label)}<small>${esc(m.model)}</small></td>
+        <td>${used}${m.tokens_today ? `<span class="muted"> · ${m.tokens_today.toLocaleString("ru-RU")} ток.</span>` : ""}</td>
+        <td>${rem == null ? `<span class="muted">${esc(m.free_note || "нет данных")}</span>` : `${rem}${m.remaining_source === "estimate" ? "*" : ""} из ${limit || "?"}${limit ? `<div class="bar"><i class="${cls}" style="width:${pct}%"></i></div>` : ""}`}</td>
+        <td>${esc(fmtTime(m.resets_at))}</td><td>${status}</td></tr>`;
+    }).join("");
+    const or = u.openrouter;
+    $("limitsNote").textContent = or && !or.error ? `OpenRouter по данным ключа: сегодня ${or.usage_daily ?? 0} $, за месяц ${or.usage_monthly ?? 0} $, бесплатный тариф: ${or.is_free_tier ? "да" : "нет"}. ` : "";
+    $("limitsNote").textContent += "Время указано по вашим часам. Журнал ведётся на сервере демо; заголовки провайдеров обновляются после каждого вызова.";
   }
 
   function fillOptions(sel, items) { sel.innerHTML = items.map(([v, t, dis]) => `<option value="${esc(v)}" ${dis ? "disabled" : ""}>${esc(t)}</option>`).join(""); }
@@ -432,8 +485,9 @@
     fillOptions($("search"), [["", `по умолчанию: ${def.join(" → ") || "searxng → ddg → jina"}`],
       ...search.map((s) => [s.name, `${s.label}${s.configured ? "" : " — нет ключа"}`, !s.configured])]);
     $("searchHint").textContent = "Первый, кто вернул результаты, побеждает.";
-    if (cfg && cfg.limits) $("limits").textContent = `${cfg.limits.rpm} запросов в минуту и ${cfg.limits.rpd} в сутки`;
+    if (cfg && cfg.limits) $("limitsFooter").textContent = `${cfg.limits.rpm} запросов в минуту и ${cfg.limits.rpd} в сутки`;
     if (cfg === null) showNoticeTop();
+    else loadUsage();
   }
   function showNoticeTop() {
     $("result").classList.add("show"); $("rq").textContent = ""; show([]);

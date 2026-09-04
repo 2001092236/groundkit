@@ -42,7 +42,8 @@ INJECTION_RE = re.compile(
     r"|(игнорируй|забудь) (все )?(предыдущие|прошлые|прежние) (инструкции|указания))"
 )
 
-MAX_CONTEXT_CHARS_PER_SOURCE = 3500
+MAX_CONTEXT_CHARS_PER_SOURCE = 2000
+MAX_CONTEXT_CHARS_TOTAL = 12000  # ~5–6K токенов кириллицы: укладывается в 8K токенов/мин бесплатного Groq
 
 
 @dataclass
@@ -90,12 +91,21 @@ def sanitize(text: str) -> tuple[str, bool]:
     return INJECTION_RE.sub("[удалено]", text), flagged
 
 
-def build_context(results: list[SearchResult], max_chars: int = MAX_CONTEXT_CHARS_PER_SOURCE) -> tuple[str, bool]:
-    """Нумерованный контекст для модели. Возвращает текст и флаг подозрения на инъекцию."""
+def build_context(
+    results: list[SearchResult],
+    max_chars: int = MAX_CONTEXT_CHARS_PER_SOURCE,
+    total_chars: int = MAX_CONTEXT_CHARS_TOTAL,
+) -> tuple[str, bool]:
+    """Нумерованный контекст для модели. Возвращает текст и флаг подозрения на инъекцию.
+
+    Каждому источнику даётся не больше ``max_chars``, всем вместе — не больше ``total_chars``:
+    бесплатные модели ограничены не только запросами в день, но и токенами в минуту.
+    """
     blocks = []
     any_flagged = False
+    per_source = max(300, min(max_chars, total_chars // max(len(results), 1)))
     for r in results:
-        body = (r.content or r.snippet or "")[:max_chars]
+        body = (r.content or r.snippet or "")[:per_source]
         clean, flagged = sanitize(body)
         any_flagged = any_flagged or flagged
         date = f" (дата: {r.published})" if r.published else ""
@@ -155,6 +165,7 @@ class Answerer:
         system_prompt: str = SYSTEM_PROMPT,
         temperature: float = 0.2,
         rewrite_query: bool = False,
+        max_context_chars: int = MAX_CONTEXT_CHARS_TOTAL,
     ) -> None:
         self.allowed_domains = [d for d in (allowed_domains or []) if d.strip()] or None
         self.search_providers = search if isinstance(search, list) else [search]
@@ -168,6 +179,7 @@ class Answerer:
         self.system_prompt = system_prompt
         self.temperature = temperature
         self.rewrite_query = rewrite_query
+        self.max_context_chars = max_context_chars
 
     def search(self, question: str):
         return run_search(question, self.search_providers, self.allowed_domains, self.limit)
@@ -215,7 +227,7 @@ class Answerer:
             pages = enrich(run.results, max_pages=self.max_pages)
             timing["fetch_s"] = round(time.monotonic() - t1, 2)
 
-        context, flagged = build_context(run.results)
+        context, flagged = build_context(run.results, total_chars=self.max_context_chars)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": f"Источники:\n\n{context}\n\nВопрос: {question}"},

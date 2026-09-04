@@ -35,7 +35,8 @@
 
 - **Поиск делает код, а не модель.** Поэтому работает с любой бесплатной моделью и позволяет ограничить домены.
 - **Каждый URL и каждый номер `[n]` в ответе сверяется с выдачей.** Чужое вырезается и попадает в отчёт.
-- **Модели переключаются автоматически.** Gemini Flash → Groq → OpenRouter → … Исчерпался дневной лимит — берётся следующая. Суммарно ~18 000 запросов в день бесплатно.
+- **Модели переключаются автоматически.** Groq → Cloudflare → OpenRouter → Mistral → … Исчерпался дневной лимит или пришёл 429 — берётся следующая, а исчерпанная пропускается до времени сброса.
+- **Учёт лимитов.** `groundkit usage` и панель в демо показывают, сколько запросов ушло сегодня, сколько осталось по данным провайдера и когда сброс.
 - **Поиск тоже с резервом.** SearXNG (свой, безлимитный) → DuckDuckGo → Exa → Brave → Jina.
 - **Claude Code CLI как чистая LLM** — для локальных экспериментов и прогонов эталонных вопросов.
 
@@ -45,7 +46,7 @@
 
 ```bash
 pip install "groundkit[ddg] @ git+https://github.com/2001092236/groundkit"
-export GEMINI_API_KEY=...      # aistudio.google.com/apikey — бесплатно, ~1500 запросов в день
+export GROQ_API_KEY=...        # console.groq.com/keys — бесплатно, 1000 запросов в день
 ```
 
 ```python
@@ -54,7 +55,7 @@ from groundkit import Answerer
 qa = Answerer(
     allowed_domains=["consultant.ru", "garant.ru", "pravo.gov.ru"],
     search=["searxng", "ddg"],                 # первый, кто вернул результаты, побеждает
-    model=["gemini/gemini-flash-latest", "groq/llama-3.3-70b-versatile"],
+    model=["groq/qwen/qwen3.8-27b", "cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast"],
 )
 result = qa.ask("В какой форме заключается договор аренды здания по ГК РФ?")
 
@@ -103,21 +104,44 @@ flowchart LR
 
 ## Бесплатные модели
 
-Ключи кладутся в `.env` (см. [`.env.example`](.env.example)). Порядок в таблице — порядок автопереключения.
+Ключи кладутся в `.env` (см. [`.env.example`](.env.example)). Порядок в таблице — порядок автопереключения. Модели и лимиты проверены живыми вызовами 4 сентября 2026; каталоги провайдеров меняются, `groundkit providers` покажет актуальное состояние.
 
 | Модель | Ключ | Бесплатно | Заметка |
 |---|---|---|---|
-| `gemini/gemini-flash-latest` | [`GEMINI_API_KEY`](https://aistudio.google.com/apikey) | ~1500 запросов/день, 15 RPM | Контекст до 1M. Дефолт |
-| `groq/llama-3.3-70b-versatile` | [`GROQ_API_KEY`](https://console.groq.com/keys) | 14 400 запросов/день, 30 RPM | ~320 ток/сек — самый быстрый |
-| `openrouter/…:free` | [`OPENROUTER_API_KEY`](https://openrouter.ai/keys) | 50 запросов/день (1000 при балансе ≥ $10) | 14+ бесплатных моделей одним ключом |
-| `mistral/mistral-small-latest` | [`MISTRAL_API_KEY`](https://console.mistral.ai) | 1 млрд токенов/мес | Но 2 RPM — узко для чата |
-| `cerebras/llama3.1-8b` | [`CEREBRAS_API_KEY`](https://cloud.cerebras.ai) | 1M токенов/день | Контекст 8K — мало для длинных страниц |
+| `groq/qwen/qwen3.8-27b` | [`GROQ_API_KEY`](https://console.groq.com/keys) | 1000 запросов/день, 30 RPM, **8K токенов/мин** | Дефолт: быстро и без карты. Из России API недоступен, нужен сервер за рубежом |
+| `groq/openai/gpt-oss-120b` | тот же | те же лимиты | Рассуждающая модель, тратит токены на размышления |
+| `cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast` | [`CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID`](https://dash.cloudflare.com) | 10 000 нейронов/день | Работает отовсюду, ~1.5 с на ответ |
+| `openrouter/google/gemma-4-26b-a4b-it:free` | [`OPENROUTER_API_KEY`](https://openrouter.ai/keys) | 50 запросов/день на все free-модели | Общий пул, бывает «temporarily rate-limited upstream» |
+| `mistral/mistral-small-latest` | [`MISTRAL_API_KEY`](https://console.mistral.ai) | 1 млрд токенов/мес, 2 RPM | Нужно включить бесплатный план **Experiment** в консоли, иначе 429 |
+| `cerebras/gpt-oss-120b` | [`CEREBRAS_API_KEY`](https://cloud.cerebras.ai) | 14 400 запросов/день | Без активированного плана отвечает 402 |
+| `gemini/gemini-flash-latest` | [`GEMINI_API_KEY`](https://aistudio.google.com/apikey) | ~1500 запросов/день | AI Studio не выдаёт ключи аккаунтам из РФ |
 | `anthropic/claude-haiku-4-5-20251001` | [`ANTHROPIC_API_KEY`](https://console.anthropic.com) | платно | Для продакшна |
 | `claude-cli` | — | в рамках подписки | См. ниже |
 
-Любая другая модель, которую знает LiteLLM, подключается строкой: `model="openrouter/qwen/qwen3-235b-a22b:free"`.
+Любая другая модель, которую знает LiteLLM, подключается строкой: `model="openrouter/minimax/minimax-m2.7:free"`.
 
-Данные о лимитах — на 4 сентября 2026; они меняются часто, проверяйте официальные страницы. ⚠️ На бесплатных уровнях запросы обычно используются провайдерами для обучения — не подавайте туда чувствительные данные. Cohere free — только некоммерческое использование.
+Контекст для модели по умолчанию ограничен 12 000 символами на все источники: бесплатные тарифы режут не только запросы в день, но и токены в минуту (Groq — 8K). Поднимается параметром `Answerer(max_context_chars=...)`.
+
+⚠️ На бесплатных уровнях запросы обычно используются провайдерами для обучения — не подавайте туда чувствительные данные. Cohere free — только некоммерческое использование.
+
+## Лимиты: сколько осталось и когда сброс
+
+groundkit ведёт простой журнал вызовов (`~/.groundkit/usage.json`, в Docker — том `usage_data`): сколько запросов ушло сегодня по каждой модели, сколько токенов, что провайдер прислал в заголовках `x-ratelimit-*` (остаток, лимит, время сброса) и когда модель ответила 429.
+
+```bash
+groundkit usage
+```
+
+```
+модель                                               сегодня  осталось  сброс (UTC)          статус
+groq/qwen/qwen3.8-27b                                     12       988  13:41                ok
+cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast        3         —                       ok
+openrouter/google/gemma-4-26b-a4b-it:free                  2       48*  00:00                ok
+mistral/mistral-small-latest                               1         —                       лимит до 12:52
+* — оценка по известному дневному лимиту, провайдер точных данных не прислал
+```
+
+То же самое отдаёт `GET /api/usage`, а на странице демо есть панель «Лимиты бесплатных моделей сегодня». Модель, ответившая 429, автоматически пропускается в цепочке до времени сброса из заголовков (или 10 минут, если провайдер его не сообщил).
 
 ## Поиск
 
@@ -136,10 +160,9 @@ flowchart LR
 
 | Связка | Цена | Когда брать |
 |---|---|---|
-| SearXNG + Gemini Flash | $0 | Дефолт. Ноль затрат, полный контроль |
-| Exa + Gemini Flash | $0 до 20K/мес | Когда важен смысловой поиск |
-| Brave + Groq | $0 до 2K/мес | Когда критична скорость ответа |
-| SearXNG → Exa → Brave + Gemini → Groq | $0 | Продакшн на бесплатных лимитах |
+| SearXNG + Groq | $0 | Дефолт. Ноль затрат, полный контроль, быстро |
+| Exa + Cloudflare | $0 до 20K/мес | Когда важен смысловой поиск |
+| SearXNG → Exa → Brave + Groq → Cloudflare → OpenRouter | $0 | Продакшн на бесплатных лимитах |
 | Firecrawl + Claude/GPT | $$ | Платный уровень продукта |
 
 По независимым замерам в верхнем эшелоне качества — Brave, Exa, Parallel, Firecrawl; Tavily при огромной популярности стабильно уступает лидерам и иногда отдаёт битые ссылки из кэша.
@@ -182,7 +205,8 @@ groundkit serve                        # http://127.0.0.1:8000, Swagger — /api
 
 | Метод | Путь | Что делает |
 |---|---|---|
-| `GET` | `/api/config` | Что настроено: поиск, модели, пресеты доменов, лимиты |
+| `GET` | `/api/config` | Что настроено: поиск, модели, пресеты доменов, лимиты демо |
+| `GET` | `/api/usage` | Учёт лимитов: использовано сегодня, остаток, время сброса по каждой модели |
 | `POST` | `/api/search` | Только поиск: `{"query", "domains", "search", "limit"}` |
 | `POST` | `/api/ask` | Поиск + модель + проверка: добавляются `"model"`, `"fetch_pages"` |
 
@@ -220,7 +244,7 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 git clone https://github.com/2001092236/groundkit && cd groundkit
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-ruff check . && pytest -q                    # 44 юнит-теста, без сети
+ruff check . && pytest -q                    # 53 юнит-теста, без сети
 GROUNDKIT_LIVE=1 pytest -m live -s           # живые: DuckDuckGo, Claude CLI, ключи из .env
 ```
 

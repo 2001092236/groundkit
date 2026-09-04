@@ -101,6 +101,34 @@ def cmd_providers(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_usage(args: argparse.Namespace) -> int:
+    from .llm import list_models
+    from .usage import get_ledger
+
+    ledger = get_ledger()
+    rows = ledger.summary(list_models())
+    if args.json:
+        print(json.dumps({"models": rows, "days": ledger.days()}, ensure_ascii=False, indent=2))
+        return 0
+    print(f"Журнал: {ledger.path}\n")
+    print(f"{'модель':52} {'сегодня':>8} {'осталось':>9}  {'сброс (UTC)':19}  статус")
+    for r in rows:
+        if not r.get("configured") and not r["used_today"]:
+            continue
+        star = "*" if r["remaining_source"] == "estimate" else ""
+        remaining = "—" if r["remaining"] is None else f"{r['remaining']}{star}"
+        reset = (r["resets_at"] or "")[11:16]
+        if r["blocked_until"]:
+            status = f"лимит до {r['blocked_until'][11:16]}"
+        elif r.get("last_error") and not r["ok_today"]:
+            status = "ошибка: " + r["last_error"][:40]
+        else:
+            status = "ok"
+        print(f"{r['model']:52} {r['used_today']:>8} {remaining:>9}  {reset:19}  {status}")
+    print("\n* — оценка по известному дневному лимиту, провайдер точных данных не прислал")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -137,6 +165,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("providers", help="что настроено, а что нет")
     p.set_defaults(func=cmd_providers)
+
+    p = sub.add_parser("usage", help="лимиты: сколько использовано сегодня, сколько осталось, когда сброс")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_usage)
 
     p = sub.add_parser("serve", help="запустить веб-демо")
     p.add_argument("--host", default="127.0.0.1")
