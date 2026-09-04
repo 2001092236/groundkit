@@ -1,7 +1,12 @@
+import json
 from datetime import UTC, datetime, timedelta
 
+import httpx
+import pytest
+import respx
+
 from groundkit import llm
-from groundkit.llm import LLMResponse, RateLimited, complete_with_fallback
+from groundkit.llm import LLMResponse, NotConfigured, RateLimited, complete_with_fallback
 from groundkit.usage import UsageLedger, get_ledger, parse_ratelimit_headers
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
@@ -116,8 +121,8 @@ def test_litellm_provider_records_usage(monkeypatch):
 
     monkeypatch.setattr(real, "completion", lambda **kw: Resp())
     monkeypatch.setattr(real, "completion_cost", lambda completion_response: 0.0)
-    llm.LiteLLM("groq/llama").complete([{"role": "user", "content": "hi"}])
-    row = get_ledger().summary([{"model": "groq/llama", "label": "x"}])[0]
+    llm.LiteLLM("gemini/flash").complete([{"role": "user", "content": "hi"}])
+    row = get_ledger().summary([{"model": "gemini/flash", "label": "x"}])[0]
     assert row["used_today"] == 1 and row["tokens_today"] == 13 and row["remaining"] == 5
 
     class RateLimitError(Exception):
@@ -128,7 +133,41 @@ def test_litellm_provider_records_usage(monkeypatch):
 
     monkeypatch.setattr(real, "completion", boom)
     try:
-        llm.LiteLLM("groq/llama").complete([{"role": "user", "content": "hi"}])
+        llm.LiteLLM("gemini/flash").complete([{"role": "user", "content": "hi"}])
     except RateLimited:
         pass
-    assert get_ledger().blocked_until("groq/llama") is not None
+    assert get_ledger().blocked_until("gemini/flash") is not None
+
+
+@respx.mock
+def test_openai_compat_records_provider_headers(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    respx.post("https://api.groq.com/openai/v1/chat/completions").mock(return_value=httpx.Response(
+        200, json={"choices": [{"message": {"content": "Париж"}}], "usage": {"prompt_tokens": 12, "completion_tokens": 2}},
+        headers={"x-ratelimit-limit-requests": "1000", "x-ratelimit-remaining-requests": "997",
+                 "x-ratelimit-reset-requests": "4m10s", "x-ratelimit-remaining-tokens": "7900"}))
+    out = llm.OpenAICompat("groq/qwen/qwen3.8-27b").complete([{"role": "user", "content": "hi"}])
+    assert out.text == "Париж" and out.provider == "groq" and out.input_tokens == 12
+    sent = json.loads(respx.calls.last.request.content)
+    assert sent["model"] == "qwen/qwen3.8-27b" and respx.calls.last.request.headers["Authorization"] == "Bearer k"
+    row = get_ledger().summary([{"model": "groq/qwen/qwen3.8-27b", "label": "g", "rpd": 1000}])[0]
+    assert row["remaining"] == 997 and row["remaining_source"] == "provider" and row["tokens_today"] == 14
+    assert row["resets_at"] > datetime.now(UTC).isoformat()
+
+
+@respx.mock
+def test_openai_compat_classifies_http_errors(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions")
+    route.mock(return_value=httpx.Response(429, json={"error": {"message": "rate-limited upstream"}}, headers={"retry-after": "5"}))
+    with pytest.raises(RateLimited):
+        llm.OpenAICompat("openrouter/google/gemma-4-26b-a4b-it:free").complete([{"role": "user", "content": "hi"}])
+    assert get_ledger().blocked_until("openrouter/google/gemma-4-26b-a4b-it:free") is not None
+    route.mock(return_value=httpx.Response(402, text="payment required"))
+    with pytest.raises(NotConfigured):
+        llm.OpenAICompat("openrouter/x").complete([{"role": "user", "content": "hi"}])
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    with pytest.raises(NotConfigured):
+        llm.OpenAICompat("openrouter/x").complete([{"role": "user", "content": "hi"}])
+    assert isinstance(llm.build_llm("mistral/mistral-small-latest"), llm.OpenAICompat)
+    assert isinstance(llm.build_llm("gemini/x"), llm.LiteLLM)

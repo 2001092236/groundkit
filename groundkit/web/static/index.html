@@ -450,7 +450,7 @@
       const rem = m.remaining, used = m.used_today;
       const pct = limit ? Math.min(100, Math.round(((rem != null ? limit - rem : used) / limit) * 100)) : 0;
       const cls = pct >= 100 ? "out" : pct >= 80 ? "hot" : "";
-      const status = m.blocked_until ? `<span class="tag bad">лимит</span> до ${esc(fmtTime(m.blocked_until))}`
+      const status = m.blocked_until ? `<span class="tag bad">лимит</span> ${esc(fmtTime(m.blocked_until).replace(/^через/, "ещё"))}`
         : (m.last_error && !m.ok_today && m.used_today) ? `<span class="tag bad">ошибка</span> ${esc(m.last_error.slice(0, 60))}`
         : m.used_today ? `<span class="tag ok">ok</span>` : `<span class="tag">не вызывалась</span>`;
       return `<tr><td class="m">${esc(m.label)}<small>${esc(m.model)}</small></td>

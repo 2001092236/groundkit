@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import httpx
+
 from .usage import get_ledger
 
 log = logging.getLogger("groundkit.llm")
@@ -143,6 +145,79 @@ class LiteLLM:
         hidden = getattr(response, "_hidden_params", None) or {}
         ledger.record(self.model, ok=True, input_tokens=result.input_tokens, output_tokens=result.output_tokens,
                       cost_usd=cost, latency_s=result.latency_s, headers=hidden.get("additional_headers"))
+        return result
+
+
+# OpenAI-совместимые провайдеры, которые вызываем напрямую: так видны заголовки x-ratelimit-*
+# (LiteLLM их не пробрасывает), а код остаётся прозрачным.
+OPENAI_COMPAT: dict[str, dict] = {
+    "groq": {"base": "https://api.groq.com/openai/v1", "env": "GROQ_API_KEY"},
+    "cerebras": {"base": "https://api.cerebras.ai/v1", "env": "CEREBRAS_API_KEY"},
+    "mistral": {"base": "https://api.mistral.ai/v1", "env": "MISTRAL_API_KEY"},
+    "openrouter": {"base": "https://openrouter.ai/api/v1", "env": "OPENROUTER_API_KEY"},
+}
+
+
+@dataclass
+class OpenAICompat:
+    """Прямой вызов ``/chat/completions`` у Groq, Cerebras, Mistral, OpenRouter.
+
+    ``model`` — в формате LiteLLM: ``groq/qwen/qwen3.8-27b``; префикс выбирает провайдера.
+    """
+
+    model: str
+    timeout: float = 90.0
+
+    @property
+    def name(self) -> str:
+        return self.model
+
+    def complete(
+        self, messages: list[Message], *, temperature: float = 0.2, max_tokens: int | None = None
+    ) -> LLMResponse:
+        prefix, _, remote = self.model.partition("/")
+        cfg = OPENAI_COMPAT[prefix]
+        key = os.getenv(cfg["env"], "")
+        ledger = get_ledger()
+        if not key:
+            raise NotConfigured(f"{cfg['env']} не задан")
+        body: dict = {"model": remote, "messages": messages, "temperature": temperature}
+        if max_tokens:
+            body["max_tokens"] = max_tokens
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        if prefix == "openrouter":
+            headers["HTTP-Referer"] = "https://github.com/2001092236/groundkit"
+            headers["X-Title"] = "groundkit"
+        started = time.monotonic()
+        try:
+            resp = httpx.post(f"{cfg['base']}/chat/completions", json=body, headers=headers, timeout=self.timeout)
+        except httpx.HTTPError as exc:
+            err = LLMError(f"{type(exc).__name__}: {exc}")
+            ledger.record(self.model, ok=False, latency_s=time.monotonic() - started, error=str(err))
+            raise err from exc
+        latency = time.monotonic() - started
+        resp_headers = dict(resp.headers)
+        if resp.status_code >= 400:
+            detail = resp.text[:300]
+            if resp.status_code == 429:
+                err = RateLimited(f"{prefix} 429: {detail}")
+            elif resp.status_code in (401, 402, 403):
+                err = NotConfigured(f"{prefix} {resp.status_code}: {detail}")
+            else:
+                err = LLMError(f"{prefix} {resp.status_code}: {detail}")
+            ledger.record(self.model, ok=False, latency_s=latency, error=str(err),
+                          rate_limited=resp.status_code == 429, headers=resp_headers)
+            raise err
+        data = resp.json()
+        choice = (data.get("choices") or [{}])[0]
+        text = (choice.get("message") or {}).get("content") or ""
+        usage = data.get("usage") or {}
+        result = LLMResponse(
+            text=text, model=self.model, provider=prefix, latency_s=latency,
+            input_tokens=usage.get("prompt_tokens"), output_tokens=usage.get("completion_tokens"), cost_usd=None,
+        )
+        ledger.record(self.model, ok=True, input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+                      latency_s=latency, headers=resp_headers)
         return result
 
 
@@ -323,6 +398,8 @@ def build_llm(spec: str | LLMProvider) -> LLMProvider:
     if spec == "claude-cli" or spec.startswith("claude-cli/"):
         _, _, model = spec.partition("/")
         return ClaudeCLI(model=model or None)
+    if spec.split("/", 1)[0] in OPENAI_COMPAT:
+        return OpenAICompat(model=spec)
     return LiteLLM(model=spec)
 
 
