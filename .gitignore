@@ -14,3 +14,5 @@ data/
 .DS_Store
 docs/screenshots/*.tmp.png
 .claude/
+design/*.html.out
+design/groundkit-demo-design.html

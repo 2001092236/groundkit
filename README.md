@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://2001092236.github.io/groundkit/"><img src="docs/assets/demo.png" alt="Демо groundkit: ответ с проверенными источниками" width="820"></a>
+  <a href="https://2001092236.github.io/groundkit/"><img src="docs/assets/demo.png" alt="Демо groundkit: вопрос по ГК РФ, 8 источников с consultant.ru и garant.ru, ответ с зелёными подтверждёнными сносками" width="820"></a>
 </p>
 
 ---
@@ -195,7 +195,8 @@ SearXNG + API + Caddy с автоматическим HTTPS:
 ```bash
 git clone https://github.com/2001092236/groundkit && cd groundkit
 cp .env.example .env                     # вписать GEMINI_API_KEY / GROQ_API_KEY
-GROUNDKIT_DOMAIN=groundkit.1-2-3-4.sslip.io docker compose -f docker/docker-compose.yml up -d --build
+# в .env: GROUNDKIT_DOMAIN=groundkit.1-2-3-4.sslip.io
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 ```
 
 Без своего домена подойдёт [sslip.io](https://sslip.io): имя вида `groundkit.1-2-3-4.sslip.io` резолвится в `1.2.3.4`, и Caddy получает сертификат Let's Encrypt сам.

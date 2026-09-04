@@ -296,8 +296,8 @@
       if ((m = l.match(/^(#{1,3})\s+(.*)/))) { flushP(); closeList(); html += `<h${m[1].length + 1}>${inline(m[2])}</h${m[1].length + 1}>`; }
       else if ((m = l.match(/^\s*[-*•]\s+(.*)/))) { flushP(); if (list !== "ul") { closeList(); list = "ul"; html += "<ul>"; } html += `<li>${inline(m[1])}</li>`; }
       else if ((m = l.match(/^\s*\d+[.)]\s+(.*)/))) { flushP(); if (list !== "ol") { closeList(); list = "ol"; html += "<ol>"; } html += `<li>${inline(m[1])}</li>`; }
-      else if (!l.trim()) { flushP(); closeList(); }
-      else para.push(l.trim());
+      else if (!l.trim()) { flushP(); }            // пустая строка между пунктами не рвёт список
+      else { if (!para.length) closeList(); para.push(l.trim()); }
     }
     flushP(); closeList();
     return html;

@@ -1,7 +1,7 @@
 # Полный стенд: SearXNG (поиск без ключей) + API/демо + Caddy с автоматическим HTTPS.
 #
 #   cp .env.example .env            # ключи моделей
-#   docker compose -f docker/docker-compose.yml up -d --build
+#   docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 #
 # GROUNDKIT_DOMAIN — домен для TLS (по умолчанию localhost, тогда Caddy выдаёт
 # самоподписанный сертификат). Для сервера без своего домена подойдёт sslip.io:
