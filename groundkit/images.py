@@ -300,7 +300,77 @@ class CloudflareImages:
         )
 
 
-IMAGE_PROVIDERS: dict[str, type] = {"pollinations": Pollinations, "cloudflare": CloudflareImages}
+@dataclass
+class HuggingFaceSpace:
+    """Бесплатный GPU в публичных пространствах Hugging Face (ZeroGPU).
+
+    Считается не деньгами, а GPU-секундами: без токена квота на практике нулевая,
+    бесплатный аккаунт даёт ~5 минут в сутки, чего хватает на несколько десятков
+    картинок FLUX.1-schnell. Токен кладётся в ``HF_TOKEN``.
+
+    Требует пакет ``gradio_client``: ``pip install "groundkit[spaces]"``.
+    Схема вызова у каждого пространства своя и меняется вместе с его кодом,
+    поэтому список запасных пространств задан явно.
+    """
+
+    space: str = "black-forest-labs/FLUX.1-schnell"
+    token: str = field(default_factory=lambda: os.getenv("HF_TOKEN", ""))
+    api_name: str = "/infer"
+    steps: int = 4
+    timeout: float = 180.0
+
+    @property
+    def name(self) -> str:
+        return f"hf-space/{self.space}"
+
+    def generate(
+        self, prompt: str, *, size: tuple[int, int] = DEFAULT_SIZE, seed: int | None = None
+    ) -> ImageResult:
+        try:
+            from gradio_client import Client
+        except ImportError as exc:  # pragma: no cover
+            raise ImageNotConfigured('Установите `pip install "groundkit[spaces]"`') from exc
+
+        ledger = get_ledger()
+        started = time.monotonic()
+        try:
+            client = Client(self.space, hf_token=self.token or None, verbose=False)
+            out = client.predict(
+                prompt=prompt, seed=seed or 0, randomize_seed=seed is None,
+                width=size[0], height=size[1], num_inference_steps=self.steps, api_name=self.api_name,
+            )
+        except Exception as exc:  # noqa: BLE001 — gradio бросает свои типы ошибок
+            text = str(exc)
+            if "quota" in text.lower():
+                err: ImageError = ImageRateLimited(f"ZeroGPU: квота исчерпана. {text[:200]}")
+            elif "401" in text or "authenticate" in text.lower():
+                err = ImageNotConfigured(f"ZeroGPU: {text[:200]}")
+            else:
+                err = ImageError(f"ZeroGPU {self.space}: {type(exc).__name__}: {text[:200]}")
+            ledger.record(self.name, ok=False, latency_s=time.monotonic() - started, error=str(err),
+                          rate_limited=isinstance(err, ImageRateLimited))
+            raise err from exc
+
+        latency = time.monotonic() - started
+        path = out[0] if isinstance(out, (tuple, list)) else out
+        try:
+            data = Path(str(path)).read_bytes()
+        except OSError as exc:
+            err = ImageError(f"ZeroGPU {self.space}: не удалось прочитать файл {path}")
+            ledger.record(self.name, ok=False, latency_s=latency, error=str(err))
+            raise err from exc
+        ledger.record(self.name, ok=True, latency_s=latency)
+        actual = image_size(data) or size
+        ctype = "image/png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+        return ImageResult(data=data, content_type=ctype, provider="hf-space", model=self.space,
+                           prompt=prompt, width=actual[0], height=actual[1], seed=seed, latency_s=latency)
+
+
+IMAGE_PROVIDERS: dict[str, type] = {
+    "pollinations": Pollinations,
+    "cloudflare": CloudflareImages,
+    "hf-space": HuggingFaceSpace,
+}
 
 IMAGE_PROVIDER_INFO: dict[str, dict] = {
     "pollinations": {"label": "Pollinations (sana)", "env": None, "needs_key": False,
@@ -309,6 +379,9 @@ IMAGE_PROVIDER_INFO: dict[str, dict] = {
     "cloudflare": {"label": "Cloudflare · FLUX.1 schnell", "env": "CLOUDFLARE_API_KEY", "needs_key": True,
                    "free": "из общих 10 000 нейронов в день",
                    "docs": "https://developers.cloudflare.com/workers-ai/models/flux-1-schnell/"},
+    "hf-space": {"label": "Hugging Face ZeroGPU · FLUX.1 schnell", "env": "HF_TOKEN", "needs_key": True,
+                 "free": "GPU-секунды: без токена на практике 0, с бесплатным аккаунтом ~5 мин/сутки",
+                 "docs": "https://huggingface.co/docs/hub/spaces-zerogpu"},
 }
 
 
@@ -318,6 +391,8 @@ def image_provider_configured(name: str) -> bool:
         return False
     if not info["needs_key"]:
         return True
+    if name == "hf-space":
+        return bool(os.getenv("HF_TOKEN"))
     return bool(os.getenv("CLOUDFLARE_API_KEY") and os.getenv("CLOUDFLARE_ACCOUNT_ID"))
 
 
@@ -327,6 +402,8 @@ def build_image_provider(spec: str | ImageProvider) -> ImageProvider:
     key, _, model = spec.partition("/")
     if key not in IMAGE_PROVIDERS:
         raise ValueError(f"Неизвестный провайдер картинок: {key}. Доступны: {list(IMAGE_PROVIDERS)}")
+    if key == "hf-space":                       # у пространств id из двух частей: org/space
+        return HuggingFaceSpace(space=model) if model else HuggingFaceSpace()
     return IMAGE_PROVIDERS[key](model=model) if model else IMAGE_PROVIDERS[key]()
 
 
@@ -341,7 +418,11 @@ def generate_image(
 
     По умолчанию: Pollinations (без ключа), затем Cloudflare, если ключ есть.
     """
-    specs = providers or ["pollinations", *(["cloudflare"] if image_provider_configured("cloudflare") else [])]
+    specs = providers or [
+        "pollinations",
+        *(["cloudflare"] if image_provider_configured("cloudflare") else []),
+        *(["hf-space"] if image_provider_configured("hf-space") else []),
+    ]
     errors: list[str] = []
     for spec in specs:
         try:

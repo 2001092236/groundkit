@@ -158,6 +158,10 @@ OPENAI_COMPAT: dict[str, dict] = {
     "cerebras": {"base": "https://api.cerebras.ai/v1", "env": "CEREBRAS_API_KEY"},
     "mistral": {"base": "https://api.mistral.ai/v1", "env": "MISTRAL_API_KEY"},
     "openrouter": {"base": "https://openrouter.ai/api/v1", "env": "OPENROUTER_API_KEY"},
+    # Z.ai (Zhipu), международный эндпоинт. У GLM размышления включены по умолчанию и
+    # съедают в разы больше токенов, поэтому по умолчанию выключаем их явно.
+    "zai": {"base": "https://api.z.ai/api/paas/v4", "env": "ZAI_API_KEY",
+            "extra_body": {"thinking": {"type": "disabled"}}},
 }
 
 
@@ -184,7 +188,8 @@ class OpenAICompat:
         ledger = get_ledger()
         if not key:
             raise NotConfigured(f"{cfg['env']} не задан")
-        body: dict = {"model": remote, "messages": messages, "temperature": temperature}
+        body: dict = {"model": remote, "messages": messages, "temperature": temperature,
+                      **cfg.get("extra_body", {})}
         if max_tokens:
             body["max_tokens"] = max_tokens
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
@@ -461,6 +466,10 @@ KNOWN_MODELS: list[dict] = [
      "env": "CLOUDFLARE_API_KEY", "free": "10 000 нейронов/день ≈ 375K входных или 49K выходных токенов",
      "rpd": None, "rpm": None, "reset": "00:00 UTC",
      "docs": "https://developers.cloudflare.com/workers-ai/platform/pricing/", "signup": "https://dash.cloudflare.com"},
+    {"model": "zai/glm-4.7-flash", "label": "Z.ai · GLM-4.7 Flash", "env": "ZAI_API_KEY",
+     "free": "бессрочно бесплатна, 1 одновременный запрос; размышления выключены (иначе расход в 28 раз выше)",
+     "rpd": None, "rpm": None, "reset": "не публикуется",
+     "docs": "https://docs.z.ai/guides/llm/glm-4.7-flash", "signup": "https://z.ai/manage-apikey/apikey-list"},
     {"model": "gigachat/GigaChat-2", "label": "Сбер · GigaChat-2", "env": "GIGACHAT_AUTH_KEY",
      "free": "Freemium: 1 000 000 токенов, обновляется раз в 12 месяцев; 1 поток", "rpd": None, "rpm": None,
      "reset": "раз в 12 месяцев от даты регистрации",
@@ -517,6 +526,7 @@ def model_configured(spec: str) -> bool:
         "gemini": "GEMINI_API_KEY", "groq": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY",
         "mistral": "MISTRAL_API_KEY", "cerebras": "CEREBRAS_API_KEY", "anthropic": "ANTHROPIC_API_KEY",
         "cloudflare": "CLOUDFLARE_API_KEY", "dashscope": "DASHSCOPE_API_KEY", "gigachat": "GIGACHAT_AUTH_KEY",
+        "zai": "ZAI_API_KEY",
         "openai": "OPENAI_API_KEY", "together_ai": "TOGETHER_API_KEY", "deepseek": "DEEPSEEK_API_KEY",
     }
     env = env_by_prefix.get(prefix)

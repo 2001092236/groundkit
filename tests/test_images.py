@@ -244,3 +244,57 @@ def test_result_size_comes_from_the_image_not_the_request(monkeypatch):
         return_value=httpx.Response(200, json={"result": {"image": base64.b64encode(png).decode()}}))
     out = CloudflareImages().generate("apple", size=(512, 512))
     assert (out.width, out.height) == (1024, 1024)
+
+
+def test_hf_space_provider(monkeypatch, tmp_path):
+    """Пространства HF вызываются через gradio_client; квота считается GPU-секундами."""
+    import sys
+    import types
+
+    from groundkit.images import HuggingFaceSpace
+
+    png = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
+           + (640).to_bytes(4, "big") + (480).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00")
+    out_file = tmp_path / "out.png"
+    out_file.write_bytes(png)
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, space, hf_token=None, verbose=True):
+            seen.update(space=space, token=hf_token)
+
+        def predict(self, **kw):
+            seen.update(kw)
+            return (str(out_file), 42)
+
+    monkeypatch.setitem(sys.modules, "gradio_client", types.SimpleNamespace(Client=FakeClient))
+    img = HuggingFaceSpace(token="hf_x").generate("яблоко", size=(640, 480), seed=7)
+    assert img.data == png and img.content_type == "image/png" and (img.width, img.height) == (640, 480)
+    assert img.provider == "hf-space" and seen["space"] == "black-forest-labs/FLUX.1-schnell"
+    assert seen["token"] == "hf_x" and seen["seed"] == 7 and seen["randomize_seed"] is False
+    assert seen["api_name"] == "/infer"
+
+
+def test_hf_space_quota_error_is_rate_limit(monkeypatch):
+    import sys
+    import types
+
+    from groundkit.images import HuggingFaceSpace
+
+    class Boom:
+        def __init__(self, *a, **k):
+            raise RuntimeError("You have exceeded your ZeroGPU quota (90s requested vs. 0s left)")
+
+    monkeypatch.setitem(sys.modules, "gradio_client", types.SimpleNamespace(Client=Boom))
+    with pytest.raises(ImageRateLimited):
+        HuggingFaceSpace().generate("x")
+
+
+def test_hf_space_configured_and_built(monkeypatch):
+    from groundkit.images import HuggingFaceSpace
+
+    assert not image_provider_configured("hf-space")
+    monkeypatch.setenv("HF_TOKEN", "hf_x")
+    assert image_provider_configured("hf-space")
+    provider = build_image_provider("hf-space/Qwen/Qwen-Image")
+    assert isinstance(provider, HuggingFaceSpace) and provider.space == "Qwen/Qwen-Image"

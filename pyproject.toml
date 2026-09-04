@@ -27,6 +27,7 @@ Demo = "https://2001092236.github.io/groundkit/"
 ddg = ["ddgs>=9.0"]
 extract = ["trafilatura>=1.12"]
 web = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+spaces = ["gradio_client>=1.5"]
 dev = ["pytest>=8", "respx>=0.21", "ruff>=0.6", "ddgs>=9.0", "fastapi>=0.115", "uvicorn[standard]>=0.30", "httpx>=0.27"]
 
 [project.scripts]

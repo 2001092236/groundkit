@@ -257,3 +257,21 @@ def test_gigachat_build_and_detect(monkeypatch):
     monkeypatch.setenv("GIGACHAT_AUTH_KEY", "k")
     assert model_configured("gigachat/GigaChat-2")
     assert "gigachat/GigaChat-2" in default_chain()
+
+
+def test_zai_disables_thinking_by_default(monkeypatch):
+    """У GLM размышления включены по умолчанию и жгут токены — выключаем их явно."""
+    import respx
+
+    from groundkit.llm import OPENAI_COMPAT, OpenAICompat
+
+    monkeypatch.setenv("ZAI_API_KEY", "k")
+    with respx.mock:
+        route = respx.post(f"{OPENAI_COMPAT['zai']['base']}/chat/completions").mock(
+            return_value=httpx.Response(200, json={"choices": [{"message": {"content": "Париж"}}],
+                                                   "usage": {"prompt_tokens": 5, "completion_tokens": 1}}))
+        out = OpenAICompat(model="zai/glm-4.7-flash").complete(MSGS)
+    assert out.text == "Париж" and out.provider == "zai"
+    body = json.loads(route.calls[0].request.content)
+    assert body["thinking"] == {"type": "disabled"} and body["model"] == "glm-4.7-flash"
+    assert route.calls[0].request.headers["authorization"] == "Bearer k"
