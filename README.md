@@ -155,6 +155,10 @@ print(img.provider, img.model, img.width, img.height)
 groundkit image "схема процесса согласования договора" --size 1024x768 -o scheme
 ```
 
+На странице демо это вторая вкладка:
+
+<p align="center"><img src="docs/assets/demo-image.png" alt="Вкладка «Картинка» на странице демо" width="820"></p>
+
 | Провайдер | Ключ | Бесплатно | Модель |
 |---|---|---|---|
 | `pollinations` | не нужен | [без ключа 1 запрос в 15 с, с бесплатным токеном — в 5 с](https://auth.pollinations.ai) | `sana`. `flux` и `turbo` — псевдонимы к ней на бесплатном тарифе |
