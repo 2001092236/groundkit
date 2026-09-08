@@ -16,6 +16,11 @@ from pathlib import Path
 KEEP_DAYS = 14
 DEFAULT_COOLDOWN_S = 600  # если провайдер ответил 429, но не сказал когда можно снова
 
+# За сколько дней считаем надёжность и с какого момента модель считается «вечно занятой».
+RELIABILITY_DAYS = 7
+FLAKY_MIN_ATTEMPTS = 3
+FLAKY_OK_RATE = 0.5
+
 _DURATION_RE = re.compile(r"(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m(?!s))?(?:(\d+(?:\.\d+)?)s)?(?:(\d+)ms)?$")
 
 
@@ -177,6 +182,29 @@ class UsageLedger:
     def today(self, model: str) -> dict:
         return dict(self._data["days"].get(_utc_now().date().isoformat(), {}).get(model, {}))
 
+    def reliability(self, model: str, days: int = RELIABILITY_DAYS) -> tuple[int, float]:
+        """Сколько было попыток за последние дни и какая доля из них удачных."""
+        since = (_utc_now() - timedelta(days=days)).date().isoformat()
+        ok = errors = 0
+        for day, models in self._data["days"].items():
+            if day < since:
+                continue
+            rec = models.get(model)
+            if rec:
+                ok += rec.get("ok", 0)
+                errors += rec.get("errors", 0)
+        attempts = ok + errors
+        return attempts, (ok / attempts if attempts else 1.0)
+
+    def reliability_tier(self, model: str) -> int:
+        """0 — модель отвечает (или ещё не проверялась), 1 — постоянно отказывает.
+
+        Нужно, чтобы качественная, но вечно занятая модель не стояла первой в цепочке:
+        она останется в списке, но после тех, что реально отвечают.
+        """
+        attempts, rate = self.reliability(model)
+        return 1 if attempts >= FLAKY_MIN_ATTEMPTS and rate < FLAKY_OK_RATE else 0
+
     def summary(self, known: list[dict]) -> list[dict]:
         """Сводка по известным моделям + всем, что встречались в журнале."""
         now = _utc_now()
@@ -197,10 +225,21 @@ class UsageLedger:
             else:
                 remaining = max(rpd - used, 0) if rpd else None
             blocked = self.blocked_until(model)
+            attempts, ok_rate = self.reliability(model)
             rows.append({
                 "model": model,
                 "label": meta.get("label", model),
                 "configured": meta.get("configured"),
+                "quality": meta.get("quality"),
+                "ifeval": meta.get("ifeval"),
+                "hhem": meta.get("hhem"),
+                "ru": meta.get("ru"),
+                "quality_note": meta.get("quality_note"),
+                "quality_source": meta.get("quality_source"),
+                "auto": meta.get("auto", True) if "model" in meta else True,
+                "reliability_tier": self.reliability_tier(model),
+                "reliability_rate": round(ok_rate, 2),
+                "reliability_attempts": attempts,
                 "used_today": used,
                 "ok_today": today.get("ok", 0),
                 "errors_today": today.get("errors", 0),

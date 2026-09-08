@@ -459,65 +459,114 @@ class ClaudeCLI:
         )
 
 
-# Известные бесплатные/дешёвые модели: как их включить и на что рассчитывать.
+# Оценки качества — на 08.09.2026. Считаем не «общий интеллект», а пригодность для нашей
+# задачи: держать инструкцию «только по источникам, ссылайся номерами» и не выдумывать при
+# пересказе. Поэтому ifeval (следование инструкциям) и hhem (доля галлюцинаций при
+# суммаризации с источником, ниже — лучше) весят больше, чем место в общих рейтингах.
+QUALITY_CHECKED = "2026-09-08"
+
 KNOWN_MODELS: list[dict] = [
-    # Лимиты — с официальных страниц провайдеров на 04.09.2026 (поле docs). rpd/rpm — только явно опубликованные.
+    # Лимиты — с официальных страниц провайдеров (поле docs). rpd/rpm — только явно опубликованные.
+    # quality — сводная оценка 0-100 для ответов по источникам; auto=False — в автоцепочку не входит.
+    {"model": "openrouter/google/gemma-4-31b-it:free", "label": "OpenRouter · Gemma 4 31B (free)",
+     "env": "OPENROUTER_API_KEY", "free": "50 запросов/день на все free-модели (1000 при пополнении ≥ $10), 20 RPM",
+     "rpd": 50, "rpm": 20, "reset": "00:00 UTC", "docs": "https://openrouter.ai/docs/api-reference/limits",
+     "signup": "https://openrouter.ai/keys",
+     "quality": 92, "ifeval": 98.9, "hhem": 7.4, "ru": None,
+     "quality_note": "Лучшее опубликованное следование инструкциям (IFEval 98.9) плюс сильный общий уровень",
+     "quality_source": "https://arxiv.org/html/2607.02770v1"},
+    {"model": "openrouter/google/gemma-4-26b-a4b-it:free", "label": "OpenRouter · Gemma 4 26B (free)",
+     "env": "OPENROUTER_API_KEY", "free": "50 запросов/день на все free-модели (1000 при пополнении ≥ $10), 20 RPM",
+     "rpd": 50, "rpm": 20, "reset": "00:00 UTC", "docs": "https://openrouter.ai/docs/api-reference/limits",
+     "signup": "https://openrouter.ai/keys",
+     "quality": 90, "ifeval": 98.5, "hhem": 5.2, "ru": None,
+     "quality_note": "Почти та же дисциплина, что у 31B, и лучший grounding среди сильных моделей",
+     "quality_source": "https://arxiv.org/html/2607.02770v1"},
+    {"model": "claude-cli", "label": "Claude Code CLI (локальные эксперименты)", "env": None,
+     "free": "в рамках подписки", "rpd": None, "rpm": None, "reset": None, "docs": None,
+     "signup": "https://docs.anthropic.com/claude-code",
+     "quality": 88, "ifeval": None, "hhem": None, "ru": None,
+     "quality_note": "Включается только вручную через GROUNDKIT_CLAUDE_CLI; не для чужих пользователей",
+     "quality_source": None},
+    {"model": "anthropic/claude-haiku-4-5-20251001", "label": "Anthropic · Claude Haiku 4.5 (платно)",
+     "env": "ANTHROPIC_API_KEY", "free": "нет, платный API", "rpd": None, "rpm": None, "reset": None,
+     "docs": "https://docs.anthropic.com/en/api/rate-limits", "signup": "https://console.anthropic.com",
+     "quality": 85, "ifeval": None, "hhem": 9.8, "ru": None,
+     "quality_note": "Платный эталон: сильна на сложных инструкциях, но по галлюцинациям уступает Gemma",
+     "quality_source": "https://github.com/vectara/hallucination-leaderboard"},
+    {"model": "gemini/gemini-3.1-flash-lite", "label": "Google Gemini 3.1 Flash Lite", "env": "GEMINI_API_KEY",
+     "free": "лимиты видны только в AI Studio; старшие Flash часто 503 «high demand»", "rpd": None, "rpm": None,
+     "reset": "00:00 по тихоокеанскому времени (07:00 UTC)", "docs": "https://ai.google.dev/gemini-api/docs/rate-limits",
+     "signup": "https://aistudio.google.com/apikey",
+     "quality": 82, "ifeval": None, "hhem": 8.2, "ru": None,
+     "quality_note": "Сильная мультиязычность (MMMLU 88.9) и контекст 1M; отдельного русского замера нет",
+     "quality_source": "https://deepmind.google/models/model-cards/gemini-3-1-flash-lite/"},
     {"model": "groq/qwen/qwen3.8-27b", "label": "Groq · Qwen 3.8 27B", "env": "GROQ_API_KEY",
      "free": "1000 запросов/день, 30 RPM, 8K токенов/мин, 200K токенов/день", "rpd": 1000, "rpm": 30,
      "reset": "по заголовкам x-ratelimit-reset-*", "docs": "https://console.groq.com/docs/rate-limits",
-     "signup": "https://console.groq.com/keys"},
-    {"model": "groq/openai/gpt-oss-120b", "label": "Groq · GPT-OSS 120B", "env": "GROQ_API_KEY",
-     "free": "1000 запросов/день, 30 RPM, 8K токенов/мин, 200K токенов/день", "rpd": 1000, "rpm": 30,
-     "reset": "по заголовкам x-ratelimit-reset-*", "docs": "https://console.groq.com/docs/rate-limits",
-     "signup": "https://console.groq.com/keys"},
-    {"model": "cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast", "label": "Cloudflare · Llama 3.3 70B",
-     "env": "CLOUDFLARE_API_KEY", "free": "10 000 нейронов/день ≈ 375K входных или 49K выходных токенов",
-     "rpd": None, "rpm": None, "reset": "00:00 UTC",
-     "docs": "https://developers.cloudflare.com/workers-ai/platform/pricing/", "signup": "https://dash.cloudflare.com"},
-    {"model": "zai/glm-4.5-flash", "label": "Z.ai · GLM-4.5 Flash", "env": "ZAI_API_KEY",
-     "free": "бессрочно бесплатна, 1 одновременный запрос; размышления выключены (иначе расход в 28 раз выше)",
-     "rpd": None, "rpm": None, "reset": "не публикуется",
-     "docs": "https://docs.z.ai/guides/llm/glm-4.5-flash", "signup": "https://z.ai/manage-apikey/apikey-list"},
-    {"model": "zai/glm-4.7-flash", "label": "Z.ai · GLM-4.7 Flash", "env": "ZAI_API_KEY",
-     "free": "бессрочно бесплатна, но чаще занята: тариф в один поток, отвечает 429",
-     "rpd": None, "rpm": None, "reset": "не публикуется",
-     "docs": "https://docs.z.ai/guides/llm/glm-4.7-flash", "signup": "https://z.ai/manage-apikey/apikey-list"},
-    {"model": "gigachat/GigaChat-2", "label": "Сбер · GigaChat-2", "env": "GIGACHAT_AUTH_KEY",
-     "free": "Freemium: 1 000 000 токенов, обновляется раз в 12 месяцев; 1 поток", "rpd": None, "rpm": None,
-     "reset": "раз в 12 месяцев от даты регистрации",
-     "docs": "https://developers.sber.ru/docs/ru/gigachat/tariffs/individual-tariffs",
-     "signup": "https://developers.sber.ru/studio"},
+     "signup": "https://console.groq.com/keys",
+     "quality": 78, "ifeval": None, "hhem": None, "ru": None,
+     "quality_note": "Самый высокий общий индекс в списке (AA 42), но ни IFEval, ни галлюцинации не измерены",
+     "quality_source": "https://artificialanalysis.ai/models/qwen3-8-27b"},
     {"model": "gigachat/GigaChat-2-Pro", "label": "Сбер · GigaChat-2 Pro", "env": "GIGACHAT_AUTH_KEY",
      "free": "из того же пула 1 000 000 токенов, расходуется быстрее", "rpd": None, "rpm": None,
      "reset": "раз в 12 месяцев от даты регистрации",
      "docs": "https://developers.sber.ru/docs/ru/gigachat/tariffs/individual-tariffs",
-     "signup": "https://developers.sber.ru/studio"},
-    {"model": "openrouter/google/gemma-4-26b-a4b-it:free", "label": "OpenRouter · Gemma 4 26B (free)",
-     "env": "OPENROUTER_API_KEY", "free": "50 запросов/день на все free-модели (1000 при пополнении ≥ $10), 20 RPM",
-     "rpd": 50, "rpm": 20, "reset": "00:00 UTC", "docs": "https://openrouter.ai/docs/api-reference/limits",
-     "signup": "https://openrouter.ai/keys"},
-    {"model": "openrouter/google/gemma-4-31b-it:free", "label": "OpenRouter · Gemma 4 31B (free)",
-     "env": "OPENROUTER_API_KEY", "free": "50 запросов/день на все free-модели (1000 при пополнении ≥ $10), 20 RPM",
-     "rpd": 50, "rpm": 20, "reset": "00:00 UTC", "docs": "https://openrouter.ai/docs/api-reference/limits",
-     "signup": "https://openrouter.ai/keys"},
+     "signup": "https://developers.sber.ru/studio", "auto": False,
+     "quality": 72, "ifeval": None, "hhem": None, "ru": "MERA 0.649",
+     "quality_note": "Единственные опубликованные русские цифры, но 1 млн токенов на год — только ручной выбор",
+     "quality_source": "https://arxiv.org/html/2506.09440v1"},
+    {"model": "zai/glm-4.7-flash", "label": "Z.ai · GLM-4.7 Flash", "env": "ZAI_API_KEY",
+     "free": "бессрочно бесплатна, но чаще занята: тариф в один поток, отвечает 429",
+     "rpd": None, "rpm": None, "reset": "не публикуется",
+     "docs": "https://docs.z.ai/guides/llm/glm-4.7-flash", "signup": "https://z.ai/manage-apikey/apikey-list",
+     "quality": 68, "ifeval": None, "hhem": 9.3, "ru": None,
+     "quality_note": "Отвечает лишь на 91.6% запросов — для «в источниках этого нет» это скорее плюс",
+     "quality_source": "https://github.com/vectara/hallucination-leaderboard"},
+    {"model": "cloudflare/@cf/meta/llama-3.3-70b-instruct-fp8-fast", "label": "Cloudflare · Llama 3.3 70B",
+     "env": "CLOUDFLARE_API_KEY", "free": "10 000 нейронов/день ≈ 375K входных или 49K выходных токенов",
+     "rpd": None, "rpm": None, "reset": "00:00 UTC",
+     "docs": "https://developers.cloudflare.com/workers-ai/platform/pricing/", "signup": "https://dash.cloudflare.com",
+     "quality": 64, "ifeval": None, "hhem": 4.1, "ru": None,
+     "quality_note": "Лучший показатель галлюцинаций во всём списке, но модель 2024 года и слабее держит формат",
+     "quality_source": "https://github.com/vectara/hallucination-leaderboard"},
+    {"model": "gigachat/GigaChat-2", "label": "Сбер · GigaChat-2", "env": "GIGACHAT_AUTH_KEY",
+     "free": "Freemium: 1 000 000 токенов, обновляется раз в 12 месяцев; 1 поток", "rpd": None, "rpm": None,
+     "reset": "раз в 12 месяцев от даты регистрации",
+     "docs": "https://developers.sber.ru/docs/ru/gigachat/tariffs/individual-tariffs",
+     "signup": "https://developers.sber.ru/studio", "auto": False,
+     "quality": 62, "ifeval": None, "hhem": None, "ru": "MERA 0.541",
+     "quality_note": "Тот же годовой пул токенов, что и у Pro, — только ручной выбор",
+     "quality_source": "https://arxiv.org/html/2506.09440v1"},
     {"model": "mistral/mistral-small-latest", "label": "Mistral Small", "env": "MISTRAL_API_KEY",
      "free": "Free mode: $10 кредитов/мес, лимиты по моделям видны только в Admin Panel → API → Limits",
      "rpd": None, "rpm": None, "reset": "не публикуется",
-     "docs": "https://docs.mistral.ai/admin/billing-usage/usage-limits", "signup": "https://console.mistral.ai/api-keys"},
+     "docs": "https://docs.mistral.ai/admin/billing-usage/usage-limits", "signup": "https://console.mistral.ai/api-keys",
+     "quality": 56, "ifeval": None, "hhem": None, "ru": None,
+     "quality_note": "По Small 4 почти нет публичных замеров; место — суждение при отсутствии данных",
+     "quality_source": "https://mistral.ai/news/mistral-small-4/"},
+    {"model": "zai/glm-4.5-flash", "label": "Z.ai · GLM-4.5 Flash", "env": "ZAI_API_KEY",
+     "free": "бессрочно бесплатна, 1 одновременный запрос; размышления выключены (иначе расход в 28 раз выше)",
+     "rpd": None, "rpm": None, "reset": "не публикуется",
+     "docs": "https://docs.z.ai/guides/llm/glm-4.5-flash", "signup": "https://z.ai/manage-apikey/apikey-list",
+     "quality": 52, "ifeval": None, "hhem": None, "ru": None,
+     "quality_note": "Предыдущее поколение, нет ни в одном рейтинге; держим как запасную того же ключа",
+     "quality_source": None},
+    {"model": "groq/openai/gpt-oss-120b", "label": "Groq · GPT-OSS 120B", "env": "GROQ_API_KEY",
+     "free": "1000 запросов/день, 30 RPM, 8K токенов/мин, 200K токенов/день", "rpd": 1000, "rpm": 30,
+     "reset": "по заголовкам x-ratelimit-reset-*", "docs": "https://console.groq.com/docs/rate-limits",
+     "signup": "https://console.groq.com/keys",
+     "quality": 40, "ifeval": None, "hhem": 14.2, "ru": None,
+     "quality_note": "Худшее сочетание для нас: 14.2% галлюцинаций и ответ на 99.9% запросов, то есть почти "
+                     "никогда не говорит «в источниках этого нет»",
+     "quality_source": "https://github.com/vectara/hallucination-leaderboard"},
     {"model": "cerebras/gpt-oss-120b", "label": "Cerebras · GPT-OSS 120B", "env": "CEREBRAS_API_KEY",
      "free": "триал $5 на 30 дней только после привязки карты; 5 RPM, 1M токенов/день", "rpd": None, "rpm": 5,
      "reset": "непрерывное пополнение (token bucket)", "docs": "https://inference-docs.cerebras.ai/support/rate-limits",
-     "signup": "https://cloud.cerebras.ai"},
-    {"model": "gemini/gemini-3.1-flash-lite", "label": "Google Gemini 3.1 Flash Lite", "env": "GEMINI_API_KEY",
-     "free": "лимиты видны только в AI Studio; старшие Flash часто 503 «high demand»", "rpd": None, "rpm": None,
-     "reset": "00:00 по тихоокеанскому времени (07:00 UTC)", "docs": "https://ai.google.dev/gemini-api/docs/rate-limits",
-     "signup": "https://aistudio.google.com/apikey"},
-    {"model": "anthropic/claude-haiku-4-5-20251001", "label": "Anthropic · Claude Haiku 4.5 (платно)",
-     "env": "ANTHROPIC_API_KEY", "free": "нет, платный API", "rpd": None, "rpm": None, "reset": None,
-     "docs": "https://docs.anthropic.com/en/api/rate-limits", "signup": "https://console.anthropic.com"},
-    {"model": "claude-cli", "label": "Claude Code CLI (локальные эксперименты)", "env": None,
-     "free": "в рамках подписки", "rpd": None, "rpm": None, "reset": None, "docs": None,
-     "signup": "https://docs.anthropic.com/claude-code"},
+     "signup": "https://cloud.cerebras.ai",
+     "quality": 40, "ifeval": None, "hhem": 14.2, "ru": None,
+     "quality_note": "Та же модель, что и на Groq, с тем же слабым профилем по галлюцинациям",
+     "quality_source": "https://github.com/vectara/hallucination-leaderboard"},
 ]
 
 CLAUDE_CLI_ENV = "GROUNDKIT_CLAUDE_CLI"
@@ -551,8 +600,22 @@ def list_models() -> list[dict]:
 
 
 def default_chain() -> list[str]:
-    """Настроенные модели в порядке предпочтения. Claude CLI — только если явно включён."""
-    return [m["model"] for m in KNOWN_MODELS if model_configured(m["model"])]
+    """Настроенные модели в порядке предпочтения: сначала качество, но не в ущерб доступности.
+
+    Порядок считается, а не зашит: сперва идут модели, которые реально отвечают, внутри —
+    по оценке качества для ответов с проверяемыми ссылками. Модели с ``auto=False``
+    (GigaChat с его годовым пулом токенов) в автоцепочку не попадают — их выбирают вручную.
+    """
+    ledger = get_ledger()
+    usable = [m for m in KNOWN_MODELS if m.get("auto", True) and model_configured(m["model"])]
+    ranked = sorted(usable, key=lambda m: (ledger.reliability_tier(m["model"]), -m.get("quality", 0)))
+    return [m["model"] for m in ranked]
+
+
+def quality_ranking() -> list[dict]:
+    """Каталог, отсортированный по оценке качества, — для документации и панели лимитов."""
+    ordered = sorted(KNOWN_MODELS, key=lambda m: -m.get("quality", 0))
+    return [{**m, "rank": i, "configured": model_configured(m["model"])} for i, m in enumerate(ordered, start=1)]
 
 
 def build_llm(spec: str | LLMProvider) -> LLMProvider:

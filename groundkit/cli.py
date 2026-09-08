@@ -85,19 +85,41 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0 if run.results else 1
 
 
-def cmd_providers(_: argparse.Namespace) -> int:
-    from .llm import CLAUDE_CLI_ENV, list_models
+def cmd_providers(args: argparse.Namespace) -> int:
+    from .llm import CLAUDE_CLI_ENV, QUALITY_CHECKED, default_chain, quality_ranking
     from .search import PROVIDER_INFO, provider_configured
 
     print("Поиск:")
     for name, info in PROVIDER_INFO.items():
         state = "✓ готов" if provider_configured(name) else f"✗ нужен {info['env']}"
         print(f"  {name:8} {info['label']:26} {info['free']:28} {state}")
-    print("\nМодели (порядок = порядок fallback):")
-    for m in list_models():
-        how = f"{m['env']}" if m["env"] else f"{CLAUDE_CLI_ENV}=1 и `claude` в PATH"
-        state = "✓ готова" if m["configured"] else f"✗ нужен {how}"
-        print(f"  {m['model']:52} {m['free']:26} {state}")
+
+    print(f"\nМодели по качеству для ответов с источниками (оценки на {QUALITY_CHECKED}):")
+    print(f"  {'#':>2} {'балл':>4} {'IFEval':>6} {'галлюц':>7}  {'модель':46} состояние")
+    for r in quality_ranking():
+        how = r["env"] or f"{CLAUDE_CLI_ENV}=1 и `claude` в PATH"
+        if not r["configured"]:
+            state = f"нет ключа ({how})"
+        elif not r.get("auto", True):
+            state = "только вручную"
+        else:
+            state = "в автоцепочке"
+        ifeval = f"{r['ifeval']}" if r["ifeval"] is not None else "—"
+        hhem = f"{r['hhem']}%" if r["hhem"] is not None else "—"
+        print(f"  {r['rank']:>2} {r['quality']:>4} {ifeval:>6} {hhem:>7}  {r['model'][:46]:46} {state}")
+        if args.why:
+            print(f"       {r['quality_note']}")
+            if r["ru"]:
+                print(f"       русский: {r['ru']}")
+            if r["quality_source"]:
+                print(f"       источник: {r['quality_source']}")
+
+    chain = default_chain()
+    print("\nФактический порядок перебора сейчас (качество, но живые модели впереди):")
+    for i, model in enumerate(chain, start=1):
+        print(f"  {i}. {model}")
+    if not chain:
+        print("  — ни одной модели не настроено")
     return 0
 
 
@@ -185,7 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("providers", help="что настроено, а что нет")
+    p = sub.add_parser("providers", help="что настроено, оценки качества и порядок перебора")
+    p.add_argument("--why", action="store_true", help="показать обоснование оценки и ссылку на источник")
     p.set_defaults(func=cmd_providers)
 
     p = sub.add_parser("image", help="сгенерировать картинку бесплатным провайдером")

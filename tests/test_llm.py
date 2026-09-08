@@ -166,11 +166,12 @@ def test_build_llm_specs():
 def test_model_detection_from_env(monkeypatch):
     assert default_chain() == []
     monkeypatch.setenv("GROQ_API_KEY", "k")
+    # обе модели на одном ключе, но GPT-OSS с худшим профилем по галлюцинациям идёт после Qwen
     assert default_chain() == ["groq/qwen/qwen3.8-27b", "groq/openai/gpt-oss-120b"]
     assert model_configured("groq/any-other") and not model_configured("gemini/x")
     monkeypatch.setenv("GROUNDKIT_CLAUDE_CLI", "1")
     monkeypatch.setattr(llm.shutil, "which", lambda _: "/usr/bin/claude")
-    assert default_chain()[-1] == "claude-cli"
+    assert default_chain()[0] == "claude-cli"          # по качеству он выше обеих Groq-моделей
     assert {m["model"] for m in list_models() if m["configured"]} == {"groq/qwen/qwen3.8-27b", "groq/openai/gpt-oss-120b", "claude-cli"}
 
 
@@ -256,7 +257,7 @@ def test_gigachat_build_and_detect(monkeypatch):
     assert not model_configured("gigachat/GigaChat-2")
     monkeypatch.setenv("GIGACHAT_AUTH_KEY", "k")
     assert model_configured("gigachat/GigaChat-2")
-    assert "gigachat/GigaChat-2" in default_chain()
+    assert "gigachat/GigaChat-2" not in default_chain()   # ручной выбор, см. test_gigachat_is_manual_only
 
 
 def test_zai_disables_thinking_by_default(monkeypatch):
@@ -307,3 +308,56 @@ def test_groq_does_not_retry_429(monkeypatch):
         with pytest.raises(RateLimited):
             OpenAICompat(model="groq/x").complete(MSGS)
         assert route.call_count == 1
+
+
+def test_chain_is_ordered_by_quality(monkeypatch):
+    """Порядок цепочки — по оценке качества, а не по порядку записи в каталоге."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    chain = default_chain()
+    assert chain[0] == "openrouter/google/gemma-4-31b-it:free"
+    assert chain[1] == "openrouter/google/gemma-4-26b-a4b-it:free"
+    # GPT-OSS с худшим профилем по галлюцинациям уходит в самый конец
+    assert chain[-1] == "groq/openai/gpt-oss-120b"
+    assert chain.index("groq/qwen/qwen3.8-27b") < chain.index("groq/openai/gpt-oss-120b")
+
+
+def test_flaky_models_drop_below_the_ones_that_answer(monkeypatch):
+    """Качественная, но вечно занятая модель остаётся в цепочке — только ниже живых."""
+    from groundkit.usage import get_ledger
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    ledger = get_ledger()
+    for model in ("openrouter/google/gemma-4-31b-it:free", "openrouter/google/gemma-4-26b-a4b-it:free"):
+        for _ in range(4):                              # общий бесплатный пул постоянно занят
+            ledger.record(model, ok=False, error="429", rate_limited=True)
+    for _ in range(4):
+        ledger.record("groq/qwen/qwen3.8-27b", ok=True)
+
+    chain = default_chain()
+    assert chain[0] == "groq/qwen/qwen3.8-27b"
+    assert "openrouter/google/gemma-4-31b-it:free" in chain          # не выкинули, только понизили
+    assert chain.index("groq/qwen/qwen3.8-27b") < chain.index("openrouter/google/gemma-4-31b-it:free")
+
+
+def test_gigachat_is_manual_only(monkeypatch):
+    """У GigaChat 1 млн токенов на год — в автоцепочку он не попадает, но выбрать его можно."""
+    monkeypatch.setenv("GIGACHAT_AUTH_KEY", "k")
+    assert model_configured("gigachat/GigaChat-2-Pro")
+    assert not any(m.startswith("gigachat/") for m in default_chain())
+    assert isinstance(build_llm("gigachat/GigaChat-2-Pro"), llm.GigaChat)
+
+
+def test_every_model_carries_quality_metadata():
+    from groundkit.llm import KNOWN_MODELS, quality_ranking
+
+    for m in KNOWN_MODELS:
+        assert isinstance(m["quality"], int) and 0 <= m["quality"] <= 100, m["model"]
+        assert m["quality_note"], m["model"]
+        # если цифра заявлена — она должна быть числом, а не строкой из отчёта
+        for field in ("ifeval", "hhem"):
+            assert m[field] is None or isinstance(m[field], (int, float)), (m["model"], field)
+    ranking = quality_ranking()
+    assert [r["rank"] for r in ranking] == list(range(1, len(KNOWN_MODELS) + 1))
+    assert ranking[0]["quality"] >= ranking[-1]["quality"]

@@ -307,7 +307,7 @@
 
   <section class="limits" id="limits" hidden>
     <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 4 3 5-6"/></svg> Лимиты бесплатных моделей сегодня</h2>
-    <p class="sub">Сколько запросов ушло через это демо, сколько осталось по данным провайдера (или по опубликованному дневному лимиту, тогда со звёздочкой) и когда счётчик обнулится. Название модели ведёт на официальную страницу лимитов. Модель с исчерпанным лимитом пропускается автоматически до времени сброса.</p>
+    <p class="sub">Модели отсортированы по качеству для нашей задачи: держать инструкцию «только по источникам» и не выдумывать при пересказе. Столбец «Качество» — сводная оценка, под ней опубликованные цифры: IFEval это следование инструкциям, галлюцинации меряет Vectara HHEM, там ниже лучше. Наведите курсор, чтобы увидеть обоснование. Дальше: сколько запросов ушло через это демо, сколько осталось по данным провайдера (со звёздочкой — по опубликованному дневному лимиту) и когда счётчик обнулится. Перебор идёт сверху вниз, но модели, которые постоянно заняты, опускаются ниже тех, что реально отвечают, а модель с исчерпанным лимитом пропускается до времени сброса.</p>
     <div class="wrap-x"><table id="limitsTable"></table></div>
     <p class="sub muted" id="limitsNote" style="margin-top:10px"></p>
   </section>
@@ -559,7 +559,8 @@
     const rows = u.models.filter((m) => m.configured || m.used_today);
     if (!rows.length) return;
     $("limits").hidden = false;
-    $("limitsTable").innerHTML = `<tr><th>Модель</th><th>Сегодня</th><th>Осталось</th><th>Сброс</th><th>Статус</th></tr>` + rows.map((m) => {
+    rows.sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0));
+    $("limitsTable").innerHTML = `<tr><th>Модель</th><th>Качество</th><th>Сегодня</th><th>Осталось</th><th>Сброс</th><th>Статус</th></tr>` + rows.map((m) => {
       const limit = m.rpd || (m.provider && (m.provider.limit_requests_day || m.provider.limit_requests));
       const rem = m.remaining, used = m.used_today;
       const pct = limit ? Math.min(100, Math.round(((rem != null ? limit - rem : used) / limit) * 100)) : 0;
@@ -569,7 +570,13 @@
         : m.used_today ? `<span class="tag ok">ok</span>` : `<span class="tag">не вызывалась</span>`;
       const label = m.docs ? `<a href="${esc(m.docs)}" target="_blank" rel="noopener" title="официальная страница лимитов">${esc(m.label)}</a>` : esc(m.label);
       const resetCell = m.provider && (m.provider.reset_requests_at || m.provider.reset_requests_day_at) ? esc(fmtTime(m.resets_at)) : `${esc(fmtTime(m.resets_at))}${m.reset_note ? `<br><span class="muted">${esc(m.reset_note)}</span>` : ""}`;
+      const facts = [m.ifeval != null ? `IFEval ${m.ifeval}` : null, m.hhem != null ? `галлюцинации ${m.hhem}%` : null,
+                     m.ru].filter(Boolean).join(" · ");
+      const quality = m.quality == null ? `<span class="muted">—</span>` : `<span title="${esc(m.quality_note || "")}">${m.quality}</span>`
+        + (m.auto === false ? `<div class="muted">только вручную</div>` : m.reliability_tier ? `<div class="muted">часто занята</div>` : "")
+        + (facts ? `<div class="muted" style="font-size:11.5px">${esc(facts)}</div>` : "");
       return `<tr><td class="m">${label}<small>${esc(m.model)}</small></td>
+        <td>${quality}</td>
         <td>${used}${m.tokens_today ? `<span class="muted"> · ${m.tokens_today.toLocaleString("ru-RU")} ток.</span>` : ""}</td>
         <td>${rem == null ? `<span class="muted">${esc(m.free_note || "нет данных")}</span>` : `${rem}${m.remaining_source === "estimate" ? "*" : ""} из ${limit || "?"}${limit ? `<div class="bar"><i class="${cls}" style="width:${pct}%"></i></div>` : ""}`}</td>
         <td>${resetCell}</td><td>${status}</td></tr>`;

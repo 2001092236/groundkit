@@ -19,8 +19,8 @@ def _clean_env(monkeypatch, tmp_path, request):
 
     if not request.node.get_closest_marker("live"):
         for key in list(os.environ):
-            if key.endswith(("_API_KEY", "_AUTH_KEY", "_ACCOUNT_ID", "_CA_BUNDLE")) or key.startswith(
-                ("GROUNDKIT_", "GIGACHAT_", "SEARXNG_")
+            if key.endswith(("_API_KEY", "_AUTH_KEY", "_ACCOUNT_ID", "_CA_BUNDLE", "_TOKEN")) or key.startswith(
+                ("GROUNDKIT_", "GIGACHAT_", "SEARXNG_", "POLLINATIONS_")
             ):
                 monkeypatch.delenv(key, raising=False)
     # Журнал лимитов — во временный файл, иначе тесты пишут в настоящий ~/.groundkit/usage.json.
