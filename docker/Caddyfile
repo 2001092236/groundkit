@@ -6,3 +6,17 @@
 		Referrer-Policy strict-origin-when-cross-origin
 	}
 }
+
+# Lector — тренажёр чтения (репозиторий 2001092236/lector). Контейнер lector-app
+# подключается к сети docker_default; наружу порт не публикует.
+lector.2-29-3-231.sslip.io {
+	encode zstd gzip
+	request_body {
+		max_size 60MB
+	}
+	reverse_proxy lector-app:8000
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
